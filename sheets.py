@@ -48,12 +48,19 @@ def load_transactions():
     data = sheet.get_all_records()
 
     df = pd.DataFrame(data)
+
+    # If dataframe is empty
+    if df.empty:
+        return pd.DataFrame(
+            columns=["date", "stock", "qty", "price", "type", "charges"]
+        )
+
+    # Convert column names safely
+    df.columns = [str(col).strip().lower() for col in df.columns]
+
     print("COLUMNS:", df.columns)
-    df.columns = df.columns.str.strip().str.lower()
 
-    print("NORMALIZED:", df.columns)
     return df
-
 
 # ---------------- ADD TRANSACTION ----------------
 
