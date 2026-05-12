@@ -1,18 +1,32 @@
 import streamlit as st
+import pandas as pd
 import plotly.express as px
 
-from sheets import load_transactions, add_transaction
-from portfolio import compute_portfolio, compute_xirr
-from portfolio import search_stocks
+from sheets import (
+    load_transactions,
+    add_transaction,
+    delete_transaction,
+    update_transaction
+)
+
+from portfolio import (
+    compute_portfolio,
+    compute_xirr,
+    search_stocks
+)
 
 st.set_page_config(page_title="Portfolio Tracker", layout="wide")
 
 st.title("📊 My Mutual Fund Tracker")
 
-# Load data
+# ---------------- LOAD DATA ----------------
 df = load_transactions()
 
-# Compute portfolio
+# Ensure row_index exists
+if "row_index" not in df.columns:
+    df["row_index"] = range(2, len(df) + 2)
+
+# ---------------- PORTFOLIO CALC ----------------
 invested, value, pnl, holdings = compute_portfolio(df)
 xirr_val = compute_xirr(df)
 
@@ -39,36 +53,37 @@ with tab1:
 
     st.subheader("📊 Allocation")
 
-    fig = px.pie(holdings, values="value", names="stock")
-    st.plotly_chart(fig, use_container_width=True)
+    if not holdings.empty:
+        fig = px.pie(holdings, values="value", names="stock")
+        st.plotly_chart(fig, use_container_width=True)
 
-# ================= TAB 2: ADD TRANSACTION =================
+# ================= TAB 2: ADD / EDIT / DELETE =================
 with tab2:
 
     st.subheader("➕ Add / Edit / Delete Transactions")
 
-    from sheets import (
-        load_transactions_with_index,
-        add_transaction,
-        delete_transaction,
-        update_transaction
-    )
-
-    df_txn = load_transactions_with_index()
-
-    st.write("### Existing Transactions")
-
-    st.dataframe(df_txn)
+    st.dataframe(df, use_container_width=True)
 
     st.divider()
 
     # ---------------- ADD ----------------
     st.subheader("➕ Add Transaction")
 
+    search_query = st.text_input("Search Stock (e.g. hdfc, reliance)")
+
+    stock_options = search_stocks(search_query) if search_query else []
+
+    selected_stock = st.selectbox(
+        "Select Stock",
+        stock_options,
+        format_func=lambda x: x["label"] if x else ""
+    )
+
+    stock = selected_stock["symbol"] if selected_stock else ""
+
     with st.form("add_form"):
 
         date = st.date_input("Date")
-        stock = st.text_input("Stock")
         qty = st.number_input("Qty", min_value=0.0)
         price = st.number_input("Price", min_value=0.0)
         type_ = st.selectbox("Type", ["BUY", "SELL"])
@@ -85,7 +100,7 @@ with tab2:
                 "type": type_,
                 "charges": charges
             })
-            st.success("Added!")
+            st.success("Transaction Added!")
             st.rerun()
 
     st.divider()
@@ -95,11 +110,11 @@ with tab2:
 
     del_row = st.selectbox(
         "Select row to delete",
-        df_txn["row_index"],
+        df["row_index"],
         format_func=lambda x: f"Row {x}"
     )
 
-    if st.button("Delete"):
+    if st.button("Delete Transaction"):
         delete_transaction(del_row)
         st.success("Deleted!")
         st.rerun()
@@ -111,16 +126,16 @@ with tab2:
 
     edit_row = st.selectbox(
         "Select row to edit",
-        df_txn["row_index"],
-        key="edit_select"
+        df["row_index"],
+        key="edit_row"
     )
 
-    edit_data = df_txn[df_txn["row_index"] == edit_row].iloc[0]
+    edit_data = df[df["row_index"] == edit_row].iloc[0]
 
     with st.form("edit_form"):
 
         date = st.date_input("Date", value=pd.to_datetime(edit_data["date"]))
-        stock = st.text_input("Stock", value=edit_data["stock"])
+        stock_edit = st.text_input("Stock", value=edit_data["stock"])
         qty = st.number_input("Qty", value=float(edit_data["qty"]))
         price = st.number_input("Price", value=float(edit_data["price"]))
         type_ = st.selectbox("Type", ["BUY", "SELL"])
@@ -131,7 +146,7 @@ with tab2:
         if update:
             update_transaction(edit_row, {
                 "date": str(date),
-                "stock": stock,
+                "stock": stock_edit,
                 "qty": qty,
                 "price": price,
                 "type": type_,
@@ -139,6 +154,7 @@ with tab2:
             })
             st.success("Updated!")
             st.rerun()
+
 # ================= TAB 3: HOLDINGS =================
 with tab3:
     st.subheader("📌 Holdings Breakdown")
@@ -149,17 +165,17 @@ with tab3:
 with tab4:
     st.subheader("🧠 Stock Scoring Engine (Coming Next)")
 
-    st.info("This will include:")
-    st.write("""
+    st.info("""
+    Scoring system will include:
     - Fundamentals (40)
     - Valuation (25)
     - Technical (20)
     - Macro (15)
     
-    Final Rule:
+    Rules:
     - > 80 → Strong Buy
     - 70–80 → Hold
     - < 70 → Exit
     """)
 
-    st.warning("We will integrate scoring engine in next step.")
+    st.warning("Next upgrade: automated scoring engine + rebalancing system")
