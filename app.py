@@ -24,8 +24,11 @@ df = load_transactions()
 
 # Guard clause (VERY IMPORTANT)
 if df.empty:
-    st.warning("No transactions found. Add some data first.")
-    st.stop()
+    st.warning("No transactions found. Showing empty dashboard.")
+
+    df = pd.DataFrame(columns=[
+        "date", "stock", "qty", "price", "type", "charges", "row_index"
+    ])
 
 # Ensure row_index exists
 if "row_index" not in df.columns:
