@@ -48,6 +48,7 @@ def load_transactions():
     data = sheet.get_all_records()
 
     df = pd.DataFrame(data)
+    print("COLUMNS:", df.columns)
 
     return df
 
