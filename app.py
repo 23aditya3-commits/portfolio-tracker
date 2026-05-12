@@ -55,7 +55,7 @@ with tab2:
             stock_options,
             format_func=lambda x: x["label"] if x else ""
         )
-        stock = selected_stock["symbol"] if selected_stock else ""stock = st.text_input("Stock")
+        stock = selected_stock["symbol"] if selected_stock else ""
         qty = st.number_input("Quantity", min_value=0.0)
         price = st.number_input("Price", min_value=0.0)
         type_ = st.selectbox("Type", ["BUY", "SELL"])
