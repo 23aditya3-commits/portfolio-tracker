@@ -1,12 +1,16 @@
 import yfinance as yf
 import pandas as pd
+import yfinance as yf
 from pyxirr import xirr
 from datetime import datetime
 
 
 def get_price(stock):
+
     try:
-        return yf.Ticker(stock + ".NS").history(period="1d")["Close"].iloc[-1]
+        return yf.Ticker(stock + ".NS") \
+            .history(period="1d")["Close"].iloc[-1]
+
     except:
         return 0
 
@@ -46,3 +50,29 @@ def compute_xirr(df):
         return xirr(cashflows)
     except:
         return 0
+
+def search_stocks(query):
+
+    if not query:
+        return []
+
+    try:
+        results = yf.Search(query).quotes
+
+        stocks = []
+
+        for item in results:
+
+            symbol = item.get("symbol", "")
+
+            if symbol.endswith(".NS"):
+
+                stocks.append({
+                    "label": symbol,
+                    "symbol": symbol.replace(".NS", "")
+                })
+
+        return stocks
+
+    except:
+        return []
