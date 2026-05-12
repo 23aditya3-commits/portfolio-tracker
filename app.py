@@ -44,24 +44,37 @@ with tab1:
 
 # ================= TAB 2: ADD TRANSACTION =================
 with tab2:
-    st.subheader("➕ Add New Transaction")
 
-    with st.form("txn_form"):
+    st.subheader("➕ Add / Edit / Delete Transactions")
+
+    from sheets import (
+        load_transactions_with_index,
+        add_transaction,
+        delete_transaction,
+        update_transaction
+    )
+
+    df_txn = load_transactions_with_index()
+
+    st.write("### Existing Transactions")
+
+    st.dataframe(df_txn)
+
+    st.divider()
+
+    # ---------------- ADD ----------------
+    st.subheader("➕ Add Transaction")
+
+    with st.form("add_form"):
+
         date = st.date_input("Date")
-        search_query = st.text_input("Search Stock (type hdfc, reliance etc)")
-        stock_options = search_stocks(search_query) if search_query else []
-        selected_stock = st.selectbox(
-            "Select Stock",
-            stock_options,
-            format_func=lambda x: x["label"] if x else ""
-        )
-        stock = selected_stock["symbol"] if selected_stock else ""
-        qty = st.number_input("Quantity", min_value=0.0)
+        stock = st.text_input("Stock")
+        qty = st.number_input("Qty", min_value=0.0)
         price = st.number_input("Price", min_value=0.0)
         type_ = st.selectbox("Type", ["BUY", "SELL"])
         charges = st.number_input("Charges", min_value=0.0)
 
-        submit = st.form_submit_button("Add Transaction")
+        submit = st.form_submit_button("Add")
 
         if submit:
             add_transaction({
@@ -72,9 +85,60 @@ with tab2:
                 "type": type_,
                 "charges": charges
             })
-            st.success("Transaction added!")
+            st.success("Added!")
             st.rerun()
 
+    st.divider()
+
+    # ---------------- DELETE ----------------
+    st.subheader("🗑️ Delete Transaction")
+
+    del_row = st.selectbox(
+        "Select row to delete",
+        df_txn["row_index"],
+        format_func=lambda x: f"Row {x}"
+    )
+
+    if st.button("Delete"):
+        delete_transaction(del_row)
+        st.success("Deleted!")
+        st.rerun()
+
+    st.divider()
+
+    # ---------------- EDIT ----------------
+    st.subheader("✏️ Edit Transaction")
+
+    edit_row = st.selectbox(
+        "Select row to edit",
+        df_txn["row_index"],
+        key="edit_select"
+    )
+
+    edit_data = df_txn[df_txn["row_index"] == edit_row].iloc[0]
+
+    with st.form("edit_form"):
+
+        date = st.date_input("Date", value=pd.to_datetime(edit_data["date"]))
+        stock = st.text_input("Stock", value=edit_data["stock"])
+        qty = st.number_input("Qty", value=float(edit_data["qty"]))
+        price = st.number_input("Price", value=float(edit_data["price"]))
+        type_ = st.selectbox("Type", ["BUY", "SELL"])
+        charges = st.number_input("Charges", value=float(edit_data["charges"]))
+
+        update = st.form_submit_button("Update")
+
+        if update:
+            update_transaction(edit_row, {
+                "date": str(date),
+                "stock": stock,
+                "qty": qty,
+                "price": price,
+                "type": type_,
+                "charges": charges
+            })
+            st.success("Updated!")
+            st.rerun()
 # ================= TAB 3: HOLDINGS =================
 with tab3:
     st.subheader("📌 Holdings Breakdown")
