@@ -3,6 +3,7 @@ import plotly.express as px
 
 from sheets import load_transactions, add_transaction
 from portfolio import compute_portfolio, compute_xirr
+from portfolio import search_stocks
 
 st.set_page_config(page_title="Portfolio Tracker", layout="wide")
 
@@ -47,7 +48,14 @@ with tab2:
 
     with st.form("txn_form"):
         date = st.date_input("Date")
-        stock = st.text_input("Stock (e.g. HDFCBANK)")
+        search_query = st.text_input("Search Stock (type hdfc, reliance etc)")
+        stock_options = search_stocks(search_query) if search_query else []
+        selected_stock = st.selectbox(
+            "Select Stock",
+            stock_options,
+            format_func=lambda x: x["label"] if x else ""
+        )
+        stock = selected_stock["symbol"] if selected_stock else ""stock = st.text_input("Stock")
         qty = st.number_input("Quantity", min_value=0.0)
         price = st.number_input("Price", min_value=0.0)
         type_ = st.selectbox("Type", ["BUY", "SELL"])
