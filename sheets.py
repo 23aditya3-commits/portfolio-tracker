@@ -49,7 +49,9 @@ def load_transactions():
 
     df = pd.DataFrame(data)
     print("COLUMNS:", df.columns)
+    df.columns = df.columns.str.strip().str.lower()
 
+    print("NORMALIZED:", df.columns)
     return df
 
 
