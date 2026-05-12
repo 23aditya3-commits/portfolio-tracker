@@ -22,11 +22,16 @@ st.title("📊 My Mutual Fund Tracker")
 # ---------------- LOAD DATA ----------------
 df = load_transactions()
 
+# Guard clause (VERY IMPORTANT)
+if df.empty:
+    st.warning("No transactions found. Add some data first.")
+    st.stop()
+
 # Ensure row_index exists
 if "row_index" not in df.columns:
     df["row_index"] = range(2, len(df) + 2)
 
-# ---------------- PORTFOLIO CALC ----------------
+# ---------------- CALCULATIONS ----------------
 invested, value, pnl, holdings = compute_portfolio(df)
 xirr_val = compute_xirr(df)
 
@@ -121,7 +126,7 @@ with tab2:
 
     st.divider()
 
-    # ---------------- EDIT ----------------
+    # ---------------- EDIT (FIXED SAFE VERSION) ----------------
     st.subheader("✏️ Edit Transaction")
 
     edit_row = st.selectbox(
@@ -130,30 +135,35 @@ with tab2:
         key="edit_row"
     )
 
-    edit_data = df[df["row_index"] == edit_row].iloc[0]
+    filtered = df[df["row_index"] == edit_row]
 
-    with st.form("edit_form"):
+    if filtered.empty:
+        st.warning("Selected row not found (it may have been deleted).")
+    else:
+        edit_data = filtered.iloc[0]
 
-        date = st.date_input("Date", value=pd.to_datetime(edit_data["date"]))
-        stock_edit = st.text_input("Stock", value=edit_data["stock"])
-        qty = st.number_input("Qty", value=float(edit_data["qty"]))
-        price = st.number_input("Price", value=float(edit_data["price"]))
-        type_ = st.selectbox("Type", ["BUY", "SELL"])
-        charges = st.number_input("Charges", value=float(edit_data["charges"]))
+        with st.form("edit_form"):
 
-        update = st.form_submit_button("Update")
+            date = st.date_input("Date", value=pd.to_datetime(edit_data["date"]))
+            stock_edit = st.text_input("Stock", value=edit_data["stock"])
+            qty = st.number_input("Qty", value=float(edit_data["qty"]))
+            price = st.number_input("Price", value=float(edit_data["price"]))
+            type_ = st.selectbox("Type", ["BUY", "SELL"])
+            charges = st.number_input("Charges", value=float(edit_data["charges"]))
 
-        if update:
-            update_transaction(edit_row, {
-                "date": str(date),
-                "stock": stock_edit,
-                "qty": qty,
-                "price": price,
-                "type": type_,
-                "charges": charges
-            })
-            st.success("Updated!")
-            st.rerun()
+            update = st.form_submit_button("Update")
+
+            if update:
+                update_transaction(edit_row, {
+                    "date": str(date),
+                    "stock": stock_edit,
+                    "qty": qty,
+                    "price": price,
+                    "type": type_,
+                    "charges": charges
+                })
+                st.success("Updated!")
+                st.rerun()
 
 # ================= TAB 3: HOLDINGS =================
 with tab3:
@@ -166,16 +176,16 @@ with tab4:
     st.subheader("🧠 Stock Scoring Engine (Coming Next)")
 
     st.info("""
-    Scoring system will include:
+    Scoring system:
     - Fundamentals (40)
     - Valuation (25)
     - Technical (20)
     - Macro (15)
-    
+
     Rules:
     - > 80 → Strong Buy
     - 70–80 → Hold
     - < 70 → Exit
     """)
 
-    st.warning("Next upgrade: automated scoring engine + rebalancing system")
+    st.warning("Next step: build scoring + auto rebalance engine")
