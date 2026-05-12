@@ -14,5 +14,13 @@ def get_client():
         creds_dict, scope
     )
 
-    client = gspread.authorize(creds)
-    return client
+    return gspread.authorize(creds)
+
+
+def get_sheet():
+    client = get_client()
+
+    sheet_name = st.secrets["sheets"]["sheet_name"]
+
+    sheet = client.open(sheet_name).worksheet("transactions")
+    return sheet
