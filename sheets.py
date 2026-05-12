@@ -12,10 +12,8 @@ def get_client():
         "https://www.googleapis.com/auth/drive"
     ]
 
-    # Read credentials from Streamlit Secrets
     creds_dict = dict(st.secrets["gcp_service_account"])
 
-    # Authenticate
     creds = ServiceAccountCredentials.from_json_keyfile_dict(
         creds_dict,
         scope
@@ -34,12 +32,10 @@ def get_sheet():
 
     sheet_name = st.secrets["sheets"]["sheet_name"]
 
-    sheet = client.open(sheet_name).worksheet("transactions")
-
-    return sheet
+    return client.open(sheet_name).worksheet("transactions")
 
 
-# ---------------- LOAD DATA ----------------
+# ---------------- LOAD DATA (WITH INDEX) ----------------
 
 def load_transactions():
 
@@ -49,18 +45,18 @@ def load_transactions():
 
     df = pd.DataFrame(data)
 
-    # If dataframe is empty
+    # Handle empty sheet
     if df.empty:
-        return pd.DataFrame(
-            columns=["date", "stock", "qty", "price", "type", "charges"]
-        )
+        return pd.DataFrame(columns=["date", "stock", "qty", "price", "type", "charges"])
 
-    # Convert column names safely
-    df.columns = [str(col).strip().lower() for col in df.columns]
+    # Normalize column names safely
+    df.columns = [str(c).strip().lower() for c in df.columns]
 
-    print("COLUMNS:", df.columns)
+    # Add sheet row index (VERY IMPORTANT for edit/delete)
+    df["row_index"] = range(2, len(df) + 2)
 
     return df
+
 
 # ---------------- ADD TRANSACTION ----------------
 
@@ -78,7 +74,35 @@ def add_transaction(row):
     ])
 
 
-# ---------------- OPTIONAL: DELETE ALL DATA ----------------
+# ---------------- DELETE TRANSACTION ----------------
+
+def delete_transaction(row_index):
+
+    sheet = get_sheet()
+
+    sheet.delete_rows(row_index)
+
+
+# ---------------- UPDATE TRANSACTION ----------------
+
+def update_transaction(row_index, row):
+
+    sheet = get_sheet()
+
+    sheet.update(
+        f"A{row_index}:F{row_index}",
+        [[
+            row["date"],
+            row["stock"],
+            row["qty"],
+            row["price"],
+            row["type"],
+            row["charges"]
+        ]]
+    )
+
+
+# ---------------- CLEAR ALL DATA (OPTIONAL SAFE RESET) ----------------
 
 def clear_transactions():
 
@@ -86,7 +110,6 @@ def clear_transactions():
 
     sheet.clear()
 
-    # Re-add headers
     sheet.append_row([
         "date",
         "stock",
