@@ -24,7 +24,7 @@ st.title("📊 My Mutual Fund Tracker")
 # ---------------- LOAD DATA ----------------
 df = load_transactions()
 
-# ✅ FIX: always clean date immediately (VERY IMPORTANT)
+# Ensure date is clean
 if not df.empty:
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
@@ -43,8 +43,6 @@ if "row_index" not in df.columns:
 # ---------------- CALCULATIONS ----------------
 invested, value, pnl, holdings = compute_portfolio(df)
 xirr_val = compute_xirr(df)
-
-# ✅ FIX: safe free cash calculation
 free_cash = calculate_free_cash(df) if not df.empty else 0
 
 # ================= TABS =================
@@ -103,23 +101,28 @@ with tab2:
 
         if submit:
 
-            # ✅ FIX 1: block first BUY properly
-            if df.empty and type_ == "BUY":
-                st.error("❌ Add initial capital or SIP entry before buying.")
-                st.stop()
+            qty_val = float(qty)
+            price_val = float(price)
 
-            # ✅ FIX 2: validate cash
-            can_buy = check_free_cash_before_buy(df, date, qty, price)
+            # ✅ BUY validation only (SELL always allowed)
+            if type_ == "BUY":
 
-            if type_ == "BUY" and not can_buy:
-                st.error("❌ Insufficient Free Cash for this transaction!")
-                st.stop()
+                can_buy = check_free_cash_before_buy(
+                    df,
+                    date,
+                    qty_val,
+                    price_val
+                )
+
+                if not can_buy:
+                    st.error("❌ Insufficient Free Cash for this transaction!")
+                    st.stop()
 
             add_transaction({
                 "date": str(date),
                 "stock": stock,
-                "qty": qty,
-                "price": price,
+                "qty": qty_val,
+                "price": price_val,
                 "type": type_,
                 "charges": charges
             })
