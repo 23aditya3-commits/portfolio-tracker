@@ -176,22 +176,51 @@ def compute_portfolio(df):
     df["type"] = df["type"].astype(str).str.strip().str.upper()
 
     df["amount"] = df["qty"] * df["price"]
-    invested = float(df.loc[df["type"] == "BUY", "amount"].sum())
 
+    total_buy_cost     = float(df.loc[df["type"] == "BUY",  "amount"].sum())
+    total_sell_proceeds = float(df.loc[df["type"] == "SELL", "amount"].sum())
+    total_charges      = float(df["charges"].sum())
+
+    # Realised P&L from closed positions
+    realised_pnl = total_sell_proceeds - total_buy_cost
+
+    # Net qty per stock for open positions
     multiplier = df["type"].map(lambda t: 1.0 if t == "BUY" else -1.0)
     df["signed_qty"] = df["qty"] * multiplier
 
     holdings = df.groupby("stock").agg({"signed_qty": "sum"}).reset_index()
     holdings.columns = ["stock", "qty"]
+    holdings["qty"] = pd.to_numeric(holdings["qty"], errors="coerce").fillna(0.0).astype("float64")
     holdings = holdings[holdings["qty"] > 0].copy()
 
-    holdings["qty"] = pd.to_numeric(holdings["qty"], errors="coerce").fillna(0.0).astype("float64")
-    holdings["cmp"] = holdings["stock"].apply(get_price)
-    holdings["cmp"] = pd.to_numeric(holdings["cmp"], errors="coerce").fillna(0.0).astype("float64")
-    holdings["value"] = holdings["qty"] * holdings["cmp"]
+    # Cost basis only for still-held shares
+    if not holdings.empty:
+        avg_cost = (
+            df[df["type"] == "BUY"]
+            .groupby("stock")
+            .apply(lambda x: (x["qty"] * x["price"]).sum() / x["qty"].sum())
+            .reset_index()
+        )
+        avg_cost.columns = ["stock", "avg_price"]
+        holdings = holdings.merge(avg_cost, on="stock", how="left")
+        holdings["avg_price"] = holdings["avg_price"].fillna(0.0)
+        holdings["invested"]  = holdings["qty"] * holdings["avg_price"]
 
-    total_value = float(holdings["value"].sum())
-    pnl = total_value - invested
+        holdings["cmp"] = holdings["stock"].apply(get_price)
+        holdings["cmp"] = pd.to_numeric(holdings["cmp"], errors="coerce").fillna(0.0).astype("float64")
+        holdings["value"] = holdings["qty"] * holdings["cmp"]
+        holdings["pnl"]   = holdings["value"] - holdings["invested"]
+
+        invested    = float(holdings["invested"].sum())
+        total_value = float(holdings["value"].sum())
+        unrealised_pnl = total_value - invested
+    else:
+        invested       = 0.0
+        total_value    = 0.0
+        unrealised_pnl = 0.0
+
+    # Total P&L = unrealised on open positions + realised on closed ones - charges
+    pnl = unrealised_pnl + realised_pnl - total_charges
 
     return invested, total_value, pnl, holdings
 
