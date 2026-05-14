@@ -178,16 +178,15 @@ def compute_portfolio(df):
     df["amount"] = df["qty"] * df["price"]
     invested = float(df.loc[df["type"] == "BUY", "amount"].sum())
 
-    df["signed_qty"] = df.apply(
-        lambda x: x["qty"] if x["type"] == "BUY" else -x["qty"],
-        axis=1
-    )
+    multiplier = df["type"].map(lambda t: 1.0 if t == "BUY" else -1.0)
+    df["signed_qty"] = df["qty"] * multiplier
 
     holdings = df.groupby("stock").agg({"signed_qty": "sum"}).reset_index()
     holdings.columns = ["stock", "qty"]
     holdings = holdings[holdings["qty"] > 0].copy()
 
-    holdings["cmp"] = holdings["stock"].apply(get_price)   # always float
+    holdings["qty"] = holdings["qty"].map(lambda v: float(v) if v else 0.0)
+    holdings["cmp"] = holdings["stock"].apply(get_price).map(float)
     holdings["value"] = holdings["qty"] * holdings["cmp"]
 
     total_value = float(holdings["value"].sum())
