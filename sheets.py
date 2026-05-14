@@ -20,9 +20,7 @@ def get_client():
         scope
     )
 
-    client = gspread.authorize(creds)
-
-    return client
+    return gspread.authorize(creds)
 
 
 # ---------------- OPEN SHEETS ----------------
@@ -30,7 +28,6 @@ def get_client():
 def get_sheet():
 
     client = get_client()
-
     sheet_name = st.secrets["sheets"]["sheet_name"]
 
     return client.open(sheet_name).worksheet("transactions")
@@ -39,24 +36,25 @@ def get_sheet():
 def get_cashflow_sheet():
 
     client = get_client()
-
     sheet_name = st.secrets["sheets"]["sheet_name"]
 
-    return client.open(sheet_name).worksheet("cashflow")
+    # ✅ FIX: standard name
+    return client.open(sheet_name).worksheet("cashflows")
 
 
-# ---------------- LOAD TRANSACTIONS ----------------
+# ---------------- TRANSACTIONS ----------------
 
 def load_transactions():
 
     sheet = get_sheet()
-
     data = sheet.get_all_records()
 
     df = pd.DataFrame(data)
 
     if df.empty:
-        return pd.DataFrame(columns=["date", "stock", "qty", "price", "type", "charges"])
+        return pd.DataFrame(columns=[
+            "date", "stock", "qty", "price", "type", "charges"
+        ])
 
     df.columns = [str(c).strip().lower() for c in df.columns]
 
@@ -65,12 +63,59 @@ def load_transactions():
     return df
 
 
-# ---------------- CASHFLOW FUNCTIONS (NEW) ----------------
+def add_transaction(row):
 
-def load_cashflow():
+    sheet = get_sheet()
+
+    sheet.append_row([
+        row["date"],
+        row["stock"],
+        row["qty"],
+        row["price"],
+        row["type"],
+        row["charges"]
+    ])
+
+
+def delete_transaction(row_index):
+
+    sheet = get_sheet()
+    sheet.delete_rows(row_index)
+
+
+def update_transaction(row_index, row):
+
+    sheet = get_sheet()
+
+    sheet.update(
+        f"A{row_index}:F{row_index}",
+        [[
+            row["date"],
+            row["stock"],
+            row["qty"],
+            row["price"],
+            row["type"],
+            row["charges"]
+        ]]
+    )
+
+
+def clear_transactions():
+
+    sheet = get_sheet()
+
+    sheet.clear()
+
+    sheet.append_row([
+        "date", "stock", "qty", "price", "type", "charges"
+    ])
+
+
+# ---------------- CASHFLOW (NEW SYSTEM) ----------------
+
+def load_cashflows():
 
     sheet = get_cashflow_sheet()
-
     data = sheet.get_all_records()
 
     df = pd.DataFrame(data)
@@ -95,70 +140,6 @@ def add_cashflow_entry(row):
     ])
 
 
-# ---------------- ADD TRANSACTION ----------------
-
-def add_transaction(row):
-
-    sheet = get_sheet()
-
-    sheet.append_row([
-        row["date"],
-        row["stock"],
-        row["qty"],
-        row["price"],
-        row["type"],
-        row["charges"]
-    ])
-
-
-# ---------------- DELETE TRANSACTION ----------------
-
-def delete_transaction(row_index):
-
-    sheet = get_sheet()
-
-    sheet.delete_rows(row_index)
-
-
-# ---------------- UPDATE TRANSACTION ----------------
-
-def update_transaction(row_index, row):
-
-    sheet = get_sheet()
-
-    sheet.update(
-        f"A{row_index}:F{row_index}",
-        [[
-            row["date"],
-            row["stock"],
-            row["qty"],
-            row["price"],
-            row["type"],
-            row["charges"]
-        ]]
-    )
-
-
-# ---------------- CLEAR TRANSACTIONS ----------------
-
-def clear_transactions():
-
-    sheet = get_sheet()
-
-    sheet.clear()
-
-    sheet.append_row([
-        "date",
-        "stock",
-        "qty",
-        "price",
-        "type",
-        "charges"
-    ])
-
-
-# ---------------- OPTIONAL: CLEAR CASHFLOW ----------------
-
 def clear_cashflow():
 
     sheet = get_cashflow_sheet()
@@ -166,8 +147,5 @@ def clear_cashflow():
     sheet.clear()
 
     sheet.append_row([
-        "date",
-        "type",
-        "amount",
-        "note"
+        "date", "type", "amount", "note"
     ])
