@@ -157,8 +157,8 @@ def clear_cashflow():
 def get_price(stock):
     """Always returns a plain Python float."""
     try:
-        val = yf.Ticker(stock + ".NS").history(period="1d")["Close"].iloc[-1]
-        return float(val)
+        val = yf.Ticker(str(stock).strip() + ".NS").history(period="1d")["Close"].iloc[-1]
+        return float(pd.to_numeric(val, errors="coerce") or 0.0)
     except Exception:
         return 0.0
 
@@ -185,15 +185,9 @@ def compute_portfolio(df):
     holdings.columns = ["stock", "qty"]
     holdings = holdings[holdings["qty"] > 0].copy()
 
-    holdings["qty"] = holdings["qty"].map(lambda v: float(v) if v else 0.0)
-    holdings["cmp"] = holdings["stock"].apply(get_price).map(float)
-
-    # DEBUG — remove once fixed
-    st.write("### DEBUG holdings dtypes", holdings.dtypes.to_dict())
-    st.write("### DEBUG holdings sample", holdings.head())
-    for col in ["qty", "cmp"]:
-        st.write(f"DEBUG {col} values + types:", [(v, type(v).__name__) for v in holdings[col].tolist()])
-
+    holdings["qty"] = pd.to_numeric(holdings["qty"], errors="coerce").fillna(0.0).astype("float64")
+    holdings["cmp"] = holdings["stock"].apply(get_price)
+    holdings["cmp"] = pd.to_numeric(holdings["cmp"], errors="coerce").fillna(0.0).astype("float64")
     holdings["value"] = holdings["qty"] * holdings["cmp"]
 
     total_value = float(holdings["value"].sum())
