@@ -400,11 +400,20 @@ with tab1:
     st.subheader("📈 Portfolio Overview")
 
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Invested",       f"₹{invested:,.0f}")
-    col2.metric("Current Value",  f"₹{value:,.0f}")
-    col3.metric("P&L",            f"₹{pnl:,.0f}")
-    col4.metric("XIRR",           f"{(xirr_val or 0.0) * 100:.2f}%")
-    col5.metric("Free Cash",      f"₹{free_cash:,.0f}")
+    col1.metric("Invested",      f"₹{invested:,.4f}")
+    col2.metric("Current Value", f"₹{value:,.4f}")
+    col3.metric("P&L",           f"₹{pnl:,.4f}")
+    col4.metric("XIRR",          f"{(xirr_val or 0.0) * 100:.4f}%")
+    col5.metric("Free Cash",     f"₹{free_cash:,.4f}")
+
+    # P&L breakdown
+    total_charges_display = float(df["charges"].sum()) if not df.empty else 0.0
+    gross_pnl = pnl + total_charges_display
+    st.caption(
+        f"📊 Gross P&L: ₹{gross_pnl:,.4f}  |  "
+        f"Charges: ₹{total_charges_display:,.4f}  |  "
+        f"Net P&L (after charges): ₹{pnl:,.4f}"
+    )
 
     st.divider()
     st.subheader("📊 Allocation")
