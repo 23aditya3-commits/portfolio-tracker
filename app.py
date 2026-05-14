@@ -24,6 +24,10 @@ st.title("📊 My Mutual Fund Tracker")
 # ---------------- LOAD DATA ----------------
 df = load_transactions()
 
+# ✅ FIX: always clean date immediately (VERY IMPORTANT)
+if not df.empty:
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+
 # Guard clause
 if df.empty:
     st.warning("No transactions found. Showing empty dashboard.")
@@ -39,7 +43,9 @@ if "row_index" not in df.columns:
 # ---------------- CALCULATIONS ----------------
 invested, value, pnl, holdings = compute_portfolio(df)
 xirr_val = compute_xirr(df)
-free_cash = calculate_free_cash(df)
+
+# ✅ FIX: safe free cash calculation
+free_cash = calculate_free_cash(df) if not df.empty else 0
 
 # ================= TABS =================
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -97,33 +103,33 @@ with tab2:
 
         if submit:
 
-            # ✅ FIXED: validation INSIDE correct block
-            can_buy = check_free_cash_before_buy(
-                df,
-                date,
-                qty,
-                price
-            )
+            # ✅ FIX 1: block first BUY properly
+            if df.empty and type_ == "BUY":
+                st.error("❌ Add initial capital or SIP entry before buying.")
+                st.stop()
+
+            # ✅ FIX 2: validate cash
+            can_buy = check_free_cash_before_buy(df, date, qty, price)
 
             if type_ == "BUY" and not can_buy:
                 st.error("❌ Insufficient Free Cash for this transaction!")
-            else:
-                add_transaction({
-                    "date": str(date),
-                    "stock": stock,
-                    "qty": qty,
-                    "price": price,
-                    "type": type_,
-                    "charges": charges
-                })
-                st.success("Transaction Added!")
-                st.rerun()
+                st.stop()
+
+            add_transaction({
+                "date": str(date),
+                "stock": stock,
+                "qty": qty,
+                "price": price,
+                "type": type_,
+                "charges": charges
+            })
+
+            st.success("Transaction Added!")
+            st.rerun()
 
     st.divider()
 
-    # ---------------- EXISTING (COLLAPSED + 3 MONTH FILTER) ----------------
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-
+    # ---------------- EXISTING ----------------
     cutoff_date = pd.Timestamp.today() - pd.DateOffset(months=3)
 
     df_filtered = df[df["date"] >= cutoff_date].copy()
