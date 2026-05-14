@@ -23,6 +23,8 @@ def compute_portfolio(df):
     if df.empty:
         return 0, 0, 0, pd.DataFrame()
 
+    df = df.copy()
+
     df["qty"] = df["qty"].astype(float)
     df["price"] = df["price"].astype(float)
 
@@ -31,7 +33,10 @@ def compute_portfolio(df):
         axis=1
     )
 
-    invested = (df[df["type"] == "BUY"]["qty"] * df[df["type"] == "BUY"]["price"]).sum()
+    invested = (
+        df[df["type"] == "BUY"]["qty"] *
+        df[df["type"] == "BUY"]["price"]
+    ).sum()
 
     holdings = df.groupby("stock").agg({
         "signed_qty": "sum"
@@ -56,6 +61,8 @@ def compute_xirr(df):
 
     if df.empty:
         return 0
+
+    df = df.copy()
 
     df["date"] = pd.to_datetime(df["date"])
     df["qty"] = df["qty"].astype(float)
@@ -120,14 +127,15 @@ def search_stocks(query):
         return []
 
 
-# ---------------- FREE CASH (DISPLAY ONLY) ----------------
+# ---------------- FREE CASH (DISPLAY ONLY - FIXED) ----------------
 
 def calculate_free_cash(df, monthly_addition=3000):
 
     if df.empty:
-        return monthly_addition
+        return 0   # ✅ FIX: no fake cash before first transaction
 
     df = df.copy()
+
     df["date"] = pd.to_datetime(df["date"])
     df["qty"] = df["qty"].astype(float)
     df["price"] = df["price"].astype(float)
@@ -157,25 +165,27 @@ def calculate_free_cash(df, monthly_addition=3000):
 
     free_cash = total_added - buy_spent - total_charges + sell_received
 
-    return round(free_cash, 2)
+    return round(max(free_cash, 0), 2)
 
 
-# ---------------- NEW: CASH VALIDATION (IMPORTANT FIX) ----------------
+# ---------------- CASH VALIDATION (FIXED CORE LOGIC) ----------------
 
 def check_free_cash_before_buy(df, new_date, qty, price, monthly_addition=3000):
 
     df = df.copy()
 
     if df.empty:
-        return monthly_addition >= (qty * price)
+        return False   # ❗ FIX: cannot allow BUY with imaginary cash
 
     df["date"] = pd.to_datetime(df["date"])
     new_date = pd.to_datetime(new_date)
 
-    # only transactions before this trade date
     past = df[df["date"] <= new_date]
 
-    start_date = past["date"].min() if not past.empty else new_date
+    if past.empty:
+        return False
+
+    start_date = past["date"].min()
 
     months = (
         (new_date.year - start_date.year) * 12 +
