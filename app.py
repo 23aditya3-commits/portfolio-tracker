@@ -97,16 +97,29 @@ with tab2:
         submit = st.form_submit_button("Add")
 
         if submit:
-            add_transaction({
-                "date": str(date),
-                "stock": stock,
-                "qty": qty,
-                "price": price,
-                "type": type_,
-                "charges": charges
-            })
-            st.success("Transaction Added!")
-            st.rerun()
+
+    from portfolio import check_free_cash_before_buy
+
+    can_buy = check_free_cash_before_buy(
+        df,
+        date,
+        qty,
+        price
+    )
+
+    if type_ == "BUY" and not can_buy:
+        st.error("❌ Insufficient Free Cash for this transaction!")
+    else:
+        add_transaction({
+            "date": str(date),
+            "stock": stock,
+            "qty": qty,
+            "price": price,
+            "type": type_,
+            "charges": charges
+        })
+        st.success("Transaction Added!")
+        st.rerun()
 
     st.divider()
 
