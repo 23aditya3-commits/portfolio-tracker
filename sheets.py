@@ -39,7 +39,7 @@ def get_cashflow_sheet():
     sheet_name = st.secrets["sheets"]["sheet_name"]
 
     # ✅ FIX: standard name
-    return client.open(sheet_name).worksheet("cashflows")
+    return client.open(sheet_name).worksheet("load_cashflow")
 
 
 # ---------------- TRANSACTIONS ----------------
