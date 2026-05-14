@@ -12,6 +12,17 @@ from oauth2client.service_account import ServiceAccountCredentials
 # SECTION 1: GOOGLE SHEETS — CLIENT & SHEET ACCESSORS
 # ================================================================
 
+def sanitize_numeric(df, cols):
+    """Force-convert columns to float, handling empty strings, None, and mixed types."""
+    for col in cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(
+                df[col].astype(str).str.strip().replace({"": "0", "None": "0", "nan": "0"}),
+                errors="coerce"
+            ).fillna(0.0)
+    return df
+
+
 def get_client():
     scope = [
         "https://spreadsheets.google.com/feeds",
@@ -47,6 +58,8 @@ def load_transactions():
         return pd.DataFrame(columns=["date", "stock", "qty", "price", "type", "charges"])
 
     df.columns = [str(c).strip().lower() for c in df.columns]
+    df = sanitize_numeric(df, ["qty", "price", "charges"])
+    df["type"] = df["type"].astype(str).str.strip().str.upper()
     df["row_index"] = range(2, len(df) + 2)
     return df
 
@@ -102,6 +115,8 @@ def load_cashflows():
         return pd.DataFrame(columns=["date", "type", "amount", "note"])
 
     df.columns = [str(c).strip().lower() for c in df.columns]
+    df = sanitize_numeric(df, ["amount"])
+    df["type"] = df["type"].astype(str).str.strip().str.upper()
     return df
 
 
@@ -141,8 +156,7 @@ def compute_portfolio(df):
         return 0, 0, 0, pd.DataFrame()
 
     df = df.copy()
-    df["qty"] = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
-    df["price"] = pd.to_numeric(df["price"], errors="coerce").fillna(0)
+    df = sanitize_numeric(df, ["qty", "price", "charges"])
 
     # FIX: compute amount per row first, THEN filter — avoids Series misalignment
     df["amount"] = df["qty"] * df["price"]
@@ -172,10 +186,8 @@ def compute_xirr(df):
         return 0
 
     df = df.copy()
-    df["date"] = pd.to_datetime(df["date"])
-    df["qty"] = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
-    df["price"] = pd.to_numeric(df["price"], errors="coerce").fillna(0)
-    df["charges"] = pd.to_numeric(df.get("charges", 0), errors="coerce").fillna(0)
+    df = sanitize_numeric(df, ["qty", "price", "charges"])
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
     cashflows = []
     for _, row in df.iterrows():
@@ -224,17 +236,14 @@ def calculate_free_cash(df):
     if cash_df.empty:
         return 0
 
-    cash_df = cash_df.copy()
-    cash_df["amount"] = pd.to_numeric(cash_df["amount"], errors="coerce").fillna(0)
+    # load_cashflows already sanitizes "amount"
     total_cash = cash_df["amount"].sum()
 
     if df.empty:
         return round(total_cash, 2)
 
     df = df.copy()
-    df["qty"] = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
-    df["price"] = pd.to_numeric(df["price"], errors="coerce").fillna(0)
-    df["charges"] = pd.to_numeric(df.get("charges", 0), errors="coerce").fillna(0)
+    df = sanitize_numeric(df, ["qty", "price", "charges"])
 
     # FIX: compute amount column first before filtering
     df["amount"] = df["qty"] * df["price"]
@@ -251,15 +260,12 @@ def check_free_cash_before_buy(df, new_date, qty, price):
     if cash_df.empty:
         return False
 
-    cash_df = cash_df.copy()
-    cash_df["amount"] = pd.to_numeric(cash_df["amount"], errors="coerce").fillna(0)
+    # load_cashflows already sanitizes "amount"
     total_cash = cash_df["amount"].sum()
 
     df = df.copy()
-    df["date"] = pd.to_datetime(df["date"])
-    df["qty"] = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
-    df["price"] = pd.to_numeric(df["price"], errors="coerce").fillna(0)
-    df["charges"] = pd.to_numeric(df.get("charges", 0), errors="coerce").fillna(0)
+    df = sanitize_numeric(df, ["qty", "price", "charges"])
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
     past = df[df["date"] <= pd.to_datetime(new_date)].copy()
 
@@ -293,7 +299,10 @@ if df.empty:
 
 for col in ["qty", "price", "charges"]:
     if col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        df[col] = pd.to_numeric(
+            df[col].astype(str).str.strip().replace({"": "0", "None": "0", "nan": "0"}),
+            errors="coerce"
+        ).fillna(0.0)
 
 if "date" in df.columns:
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
