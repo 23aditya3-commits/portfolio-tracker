@@ -6,13 +6,16 @@ from sheets import (
     load_transactions,
     add_transaction,
     delete_transaction,
-    update_transaction
+    update_transaction,
+    load_cashflow,
+    add_cashflow_entry
 )
 
 from portfolio import (
     compute_portfolio,
     compute_xirr,
-    search_stocks
+    search_stocks,
+    calculate_free_cash
 )
 
 st.set_page_config(page_title="Portfolio Tracker", layout="wide")
@@ -38,6 +41,10 @@ if "row_index" not in df.columns:
 invested, value, pnl, holdings = compute_portfolio(df)
 xirr_val = compute_xirr(df)
 
+cash_df = load_cashflow()
+
+free_cash = calculate_free_cash(cash_df)
+
 # ================= TABS =================
 tab1, tab2, tab3, tab4 = st.tabs([
     "📈 Dashboard",
@@ -50,12 +57,13 @@ tab1, tab2, tab3, tab4 = st.tabs([
 with tab1:
     st.subheader("📈 Portfolio Overview")
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
 
     col1.metric("Invested", f"₹{invested:,.0f}")
     col2.metric("Current Value", f"₹{value:,.0f}")
     col3.metric("P&L", f"₹{pnl:,.0f}")
     col4.metric("XIRR", f"{xirr_val*100:.2f}%")
+    col5.metric("Free Cash", f"₹{free_cash:,.0f}")
 
     st.divider()
 
@@ -100,6 +108,7 @@ with tab2:
         submit = st.form_submit_button("Add")
 
         if submit:
+
             add_transaction({
                 "date": str(date),
                 "stock": stock,
@@ -108,6 +117,29 @@ with tab2:
                 "type": type_,
                 "charges": charges
             })
+
+            # ---------------- CASHFLOW ENTRY ----------------
+
+            total_amount = qty * price
+
+            if type_ == "BUY":
+
+                add_cashflow_entry({
+                    "date": str(date),
+                    "type": "BUY",
+                    "amount": -(total_amount + charges),
+                    "note": stock
+                })
+
+            elif type_ == "SELL":
+
+                add_cashflow_entry({
+                    "date": str(date),
+                    "type": "SELL",
+                    "amount": total_amount - charges,
+                    "note": stock
+                })
+
             st.success("Transaction Added!")
             st.rerun()
 
