@@ -6,7 +6,9 @@ from sheets import (
     load_transactions,
     add_transaction,
     delete_transaction,
-    update_transaction
+    update_transaction,
+    load_cashflow,
+    add_cashflow_entry
 )
 
 from portfolio import (
@@ -24,7 +26,7 @@ st.title("📊 My Mutual Fund Tracker")
 # ================= LOAD DATA =================
 df = load_transactions()
 
-# ---------------- SAFE EMPTY HANDLING ----------------
+# SAFE EMPTY HANDLING
 if df is None:
     df = pd.DataFrame()
 
@@ -35,7 +37,7 @@ if df.empty:
         "date", "stock", "qty", "price", "type", "charges", "row_index"
     ])
 
-# ---------------- SAFE TYPE CONVERSION ----------------
+# SAFE TYPE CONVERSION
 for col in ["qty", "price", "charges"]:
     if col in df.columns:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
@@ -48,12 +50,13 @@ invested, value, pnl, holdings = compute_portfolio(df)
 xirr_val = compute_xirr(df)
 free_cash = calculate_free_cash(df)
 
-# ================= TABS =================
-tab1, tab2, tab3, tab4 = st.tabs([
+# ================= TABS (UPDATED) =================
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📈 Dashboard",
     "➕ Add Transaction",
     "📌 Holdings",
-    "🧠 Scoring (WIP)"
+    "🧠 Scoring (WIP)",
+    "💰 Funds"
 ])
 
 # ================= TAB 1 =================
@@ -84,7 +87,6 @@ with tab2:
     st.subheader("➕ Add Transaction")
 
     search_query = st.text_input("Search Stock (e.g. hdfc, reliance)")
-
     stock_options = search_stocks(search_query) if search_query else []
 
     if not stock_options:
@@ -113,7 +115,6 @@ with tab2:
             qty = float(qty)
             price = float(price)
 
-            # ---------------- BUY VALIDATION ----------------
             if type_ == "BUY":
 
                 can_buy = check_free_cash_before_buy(
@@ -141,7 +142,6 @@ with tab2:
 
     st.divider()
 
-    # ================= LAST 3 MONTHS =================
     cutoff = pd.Timestamp.today() - pd.DateOffset(months=3)
 
     if "date" in df.columns:
@@ -154,68 +154,59 @@ with tab2:
 
     st.divider()
 
-    # ================= EDIT / DELETE =================
     with st.expander("🛠️ Edit / Delete Transactions", expanded=False):
 
         st.subheader("🗑️ Delete Transaction")
 
-        if "row_index" in df.columns:
+        del_row = st.selectbox(
+            "Select row to delete",
+            df["row_index"],
+            format_func=lambda x: f"Row {x}"
+        )
 
-            del_row = st.selectbox(
-                "Select row to delete",
-                df["row_index"],
-                format_func=lambda x: f"Row {x}"
-            )
-
-            if st.button("Delete Transaction"):
-                delete_transaction(del_row)
-                st.success("Deleted!")
-                st.rerun()
+        if st.button("Delete Transaction"):
+            delete_transaction(del_row)
+            st.success("Deleted!")
+            st.rerun()
 
         st.divider()
 
         st.subheader("✏️ Edit Transaction")
 
-        if "row_index" in df.columns:
+        edit_row = st.selectbox(
+            "Select row to edit",
+            df["row_index"],
+            key="edit_row"
+        )
 
-            edit_row = st.selectbox(
-                "Select row to edit",
-                df["row_index"],
-                key="edit_row"
-            )
+        filtered = df[df["row_index"] == edit_row]
 
-            filtered = df[df["row_index"] == edit_row]
+        if not filtered.empty:
 
-            if not filtered.empty:
+            edit_data = filtered.iloc[0]
 
-                edit_data = filtered.iloc[0]
+            with st.form("edit_form"):
 
-                with st.form("edit_form"):
+                date = st.date_input("Date", value=pd.to_datetime(edit_data["date"]))
+                stock_edit = st.text_input("Stock", value=edit_data["stock"])
+                qty = st.number_input("Qty", value=float(edit_data["qty"]))
+                price = st.number_input("Price", value=float(edit_data["price"]))
+                type_ = st.selectbox("Type", ["BUY", "SELL"])
+                charges = st.number_input("Charges", value=float(edit_data["charges"]))
 
-                    date = st.date_input(
-                        "Date",
-                        value=pd.to_datetime(edit_data["date"])
-                    )
+                update = st.form_submit_button("Update")
 
-                    stock_edit = st.text_input("Stock", value=edit_data["stock"])
-                    qty = st.number_input("Qty", value=float(edit_data["qty"]))
-                    price = st.number_input("Price", value=float(edit_data["price"]))
-                    type_ = st.selectbox("Type", ["BUY", "SELL"])
-                    charges = st.number_input("Charges", value=float(edit_data["charges"]))
-
-                    update = st.form_submit_button("Update")
-
-                    if update:
-                        update_transaction(edit_row, {
-                            "date": str(date),
-                            "stock": stock_edit,
-                            "qty": qty,
-                            "price": price,
-                            "type": type_,
-                            "charges": charges
-                        })
-                        st.success("Updated!")
-                        st.rerun()
+                if update:
+                    update_transaction(edit_row, {
+                        "date": str(date),
+                        "stock": stock_edit,
+                        "qty": qty,
+                        "price": price,
+                        "type": type_,
+                        "charges": charges
+                    })
+                    st.success("Updated!")
+                    st.rerun()
 
 # ================= TAB 3 =================
 with tab3:
@@ -239,3 +230,38 @@ with tab4:
     """)
 
     st.warning("Next step: build scoring + auto rebalance engine")
+
+# ================= TAB 5 - FUNDS =================
+with tab5:
+
+    st.subheader("💰 Funds Management")
+
+    cf = load_cashflow()
+
+    st.write("### Cashflow History")
+    st.dataframe(cf, use_container_width=True)
+
+    st.divider()
+
+    st.subheader("➕ Add Funds")
+
+    with st.form("fund_form"):
+
+        date = st.date_input("Date")
+        amount = st.number_input("Amount", min_value=0.0)
+        type_ = st.selectbox("Type", ["CREDIT", "DEBIT"])
+        note = st.text_input("Note")
+
+        submit = st.form_submit_button("Add Fund Entry")
+
+        if submit:
+
+            add_cashflow_entry({
+                "date": str(date),
+                "type": type_,
+                "amount": amount,
+                "note": note
+            })
+
+            st.success("Fund Entry Added!")
+            st.rerun()
