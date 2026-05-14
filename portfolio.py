@@ -26,16 +26,13 @@ def compute_portfolio(df):
     df["qty"] = df["qty"].astype(float)
     df["price"] = df["price"].astype(float)
 
-    # BUY = positive holdings, SELL = negative
     df["signed_qty"] = df.apply(
         lambda x: x["qty"] if x["type"] == "BUY" else -x["qty"],
         axis=1
     )
 
-    # invested capital (only BUY side)
     invested = (df[df["type"] == "BUY"]["qty"] * df[df["type"] == "BUY"]["price"]).sum()
 
-    # holdings net qty
     holdings = df.groupby("stock").agg({
         "signed_qty": "sum"
     }).reset_index()
@@ -53,7 +50,7 @@ def compute_portfolio(df):
     return invested, total_value, pnl, holdings
 
 
-# ---------------- XIRR (FIXED + REALISTIC) ----------------
+# ---------------- XIRR ----------------
 
 def compute_xirr(df):
 
@@ -78,7 +75,6 @@ def compute_xirr(df):
 
         cashflows.append((row["date"], amount))
 
-    # current portfolio value
     total_value = 0
 
     holdings = df.groupby("stock")["qty"].sum().reset_index()
@@ -124,13 +120,14 @@ def search_stocks(query):
         return []
 
 
-# ---------------- FREE CASH SYSTEM ----------------
+# ---------------- FREE CASH (DISPLAY ONLY) ----------------
 
 def calculate_free_cash(df, monthly_addition=3000):
 
     if df.empty:
         return monthly_addition
 
+    df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
     df["qty"] = df["qty"].astype(float)
     df["price"] = df["price"].astype(float)
@@ -161,3 +158,44 @@ def calculate_free_cash(df, monthly_addition=3000):
     free_cash = total_added - buy_spent - total_charges + sell_received
 
     return round(free_cash, 2)
+
+
+# ---------------- NEW: CASH VALIDATION (IMPORTANT FIX) ----------------
+
+def check_free_cash_before_buy(df, new_date, qty, price, monthly_addition=3000):
+
+    df = df.copy()
+
+    if df.empty:
+        return monthly_addition >= (qty * price)
+
+    df["date"] = pd.to_datetime(df["date"])
+    new_date = pd.to_datetime(new_date)
+
+    # only transactions before this trade date
+    past = df[df["date"] <= new_date]
+
+    start_date = past["date"].min() if not past.empty else new_date
+
+    months = (
+        (new_date.year - start_date.year) * 12 +
+        (new_date.month - start_date.month) + 1
+    )
+
+    total_cash = months * monthly_addition
+
+    buy_spent = (
+        past[past["type"] == "BUY"]["qty"] *
+        past[past["type"] == "BUY"]["price"]
+    ).sum()
+
+    sell_received = (
+        past[past["type"] == "SELL"]["qty"] *
+        past[past["type"] == "SELL"]["price"]
+    ).sum()
+
+    charges = past["charges"].sum()
+
+    available_cash = total_cash - buy_spent - charges + sell_received
+
+    return available_cash >= (qty * price)
