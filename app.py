@@ -9,19 +9,33 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 
 # ================================================================
-# SECTION 1: GOOGLE SHEETS — CLIENT & SHEET ACCESSORS
+# SECTION 1: HELPERS
 # ================================================================
 
 def sanitize_numeric(df, cols):
-    """Force-convert columns to float, handling empty strings, None, and mixed types."""
+    """
+    Robustly convert columns to float.
+    Uses per-element map() — works across all pandas versions
+    and handles empty strings, None, mixed int/str from Google Sheets.
+    """
+    def _clean(v):
+        s = str(v).strip()
+        if s in ("", "None", "nan", "NaN", "NaT"):
+            return 0.0
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return 0.0
+
     for col in cols:
         if col in df.columns:
-            df[col] = pd.to_numeric(
-                df[col].astype(str).str.strip().replace({"": "0", "None": "0", "nan": "0"}),
-                errors="coerce"
-            ).fillna(0.0)
+            df[col] = df[col].map(_clean)
     return df
 
+
+# ================================================================
+# SECTION 2: GOOGLE SHEETS — CLIENT & SHEET ACCESSORS
+# ================================================================
 
 def get_client():
     scope = [
@@ -46,7 +60,7 @@ def get_cashflow_sheet():
 
 
 # ================================================================
-# SECTION 2: GOOGLE SHEETS — TRANSACTION CRUD
+# SECTION 3: GOOGLE SHEETS — TRANSACTION CRUD
 # ================================================================
 
 def load_transactions():
@@ -69,10 +83,10 @@ def add_transaction(row):
     sheet.append_row([
         row["date"],
         row["stock"],
-        row["qty"],
-        row["price"],
+        float(row["qty"]),
+        float(row["price"]),
         row["type"],
-        row["charges"]
+        float(row["charges"])
     ])
 
 
@@ -88,10 +102,10 @@ def update_transaction(row_index, row):
         [[
             row["date"],
             row["stock"],
-            row["qty"],
-            row["price"],
+            float(row["qty"]),
+            float(row["price"]),
             row["type"],
-            row["charges"]
+            float(row["charges"])
         ]]
     )
 
@@ -103,7 +117,7 @@ def clear_transactions():
 
 
 # ================================================================
-# SECTION 3: GOOGLE SHEETS — CASHFLOW CRUD
+# SECTION 4: GOOGLE SHEETS — CASHFLOW CRUD
 # ================================================================
 
 def load_cashflows():
@@ -125,7 +139,7 @@ def add_cashflow_entry(row):
     sheet.append_row([
         row["date"],
         row["type"],
-        row["amount"],
+        float(row["amount"]),
         row["note"]
     ])
 
@@ -137,31 +151,32 @@ def clear_cashflow():
 
 
 # ================================================================
-# SECTION 4: PORTFOLIO — PRICE FETCH
+# SECTION 5: PORTFOLIO — PRICE FETCH
 # ================================================================
 
 def get_price(stock):
+    """Always returns a plain Python float."""
     try:
-        return yf.Ticker(stock + ".NS").history(period="1d")["Close"].iloc[-1]
-    except:
-        return 0
+        val = yf.Ticker(stock + ".NS").history(period="1d")["Close"].iloc[-1]
+        return float(val)
+    except Exception:
+        return 0.0
 
 
 # ================================================================
-# SECTION 5: PORTFOLIO — CALCULATIONS
+# SECTION 6: PORTFOLIO — CALCULATIONS
 # ================================================================
 
 def compute_portfolio(df):
     if df.empty:
-        return 0, 0, 0, pd.DataFrame()
+        return 0.0, 0.0, 0.0, pd.DataFrame()
 
     df = df.copy()
     df = sanitize_numeric(df, ["qty", "price", "charges"])
+    df["type"] = df["type"].astype(str).str.strip().str.upper()
 
-    # FIX: compute amount per row first, THEN filter — avoids Series misalignment
     df["amount"] = df["qty"] * df["price"]
-
-    invested = df.loc[df["type"] == "BUY", "amount"].sum()
+    invested = float(df.loc[df["type"] == "BUY", "amount"].sum())
 
     df["signed_qty"] = df.apply(
         lambda x: x["qty"] if x["type"] == "BUY" else -x["qty"],
@@ -170,12 +185,12 @@ def compute_portfolio(df):
 
     holdings = df.groupby("stock").agg({"signed_qty": "sum"}).reset_index()
     holdings.columns = ["stock", "qty"]
-    holdings = holdings[holdings["qty"] > 0]
+    holdings = holdings[holdings["qty"] > 0].copy()
 
-    holdings["cmp"] = holdings["stock"].apply(get_price)
+    holdings["cmp"] = holdings["stock"].apply(get_price)   # always float
     holdings["value"] = holdings["qty"] * holdings["cmp"]
 
-    total_value = holdings["value"].sum()
+    total_value = float(holdings["value"].sum())
     pnl = total_value - invested
 
     return invested, total_value, pnl, holdings
@@ -183,40 +198,40 @@ def compute_portfolio(df):
 
 def compute_xirr(df):
     if df.empty:
-        return 0
+        return 0.0
 
     df = df.copy()
     df = sanitize_numeric(df, ["qty", "price", "charges"])
+    df["type"] = df["type"].astype(str).str.strip().str.upper()
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
-    # pyxirr requires plain Python datetime + plain Python float — not pandas/numpy types
     cashflows = []
     for _, row in df.iterrows():
         if pd.isnull(row["date"]):
             continue
         amount = float(row["qty"]) * float(row["price"])
-        if str(row["type"]).strip().upper() == "BUY":
+        if row["type"] == "BUY":
             amount = -(amount + float(row["charges"]))
         else:
             amount = amount - float(row["charges"])
+        # pyxirr needs plain Python datetime, not pandas Timestamp
         cashflows.append((row["date"].to_pydatetime(), amount))
 
     if not cashflows:
-        return 0
+        return 0.0
 
     holdings = df.groupby("stock")["qty"].sum().reset_index()
     total_value = sum(
-        float(row["qty"]) * float(get_price(row["stock"]))
+        float(row["qty"]) * get_price(str(row["stock"]))
         for _, row in holdings.iterrows()
         if float(row["qty"]) > 0
     )
-
     cashflows.append((datetime.today(), float(total_value)))
 
     try:
         return xirr(cashflows)
-    except:
-        return 0
+    except Exception:
+        return 0.0
 
 
 def search_stocks(query):
@@ -225,40 +240,42 @@ def search_stocks(query):
     try:
         results = yf.Search(query).quotes
         return [
-            {"label": item.get("symbol", ""), "symbol": item.get("symbol", "").replace(".NS", "")}
+            {
+                "label": item.get("symbol", ""),
+                "symbol": item.get("symbol", "").replace(".NS", "")
+            }
             for item in results
             if item.get("symbol", "").endswith(".NS")
         ]
-    except:
+    except Exception:
         return []
 
 
 # ================================================================
-# SECTION 6: PORTFOLIO — FREE CASH SYSTEM
+# SECTION 7: PORTFOLIO — FREE CASH SYSTEM
 # ================================================================
 
 def calculate_free_cash(df):
     cash_df = load_cashflows()
     if cash_df.empty:
-        return 0
+        return 0.0
 
-    # load_cashflows already sanitizes "amount"
-    total_cash = cash_df["amount"].sum()
+    total_cash = float(cash_df["amount"].sum())
 
     if df.empty:
         return round(total_cash, 2)
 
     df = df.copy()
     df = sanitize_numeric(df, ["qty", "price", "charges"])
-
-    # FIX: compute amount column first before filtering
+    df["type"] = df["type"].astype(str).str.strip().str.upper()
     df["amount"] = df["qty"] * df["price"]
 
-    buy_spent = df.loc[df["type"] == "BUY", "amount"].sum()
-    sell_received = df.loc[df["type"] == "SELL", "amount"].sum()
-    available = total_cash - buy_spent - df["charges"].sum() + sell_received
+    buy_spent    = float(df.loc[df["type"] == "BUY",  "amount"].sum())
+    sell_received = float(df.loc[df["type"] == "SELL", "amount"].sum())
+    charges_total = float(df["charges"].sum())
 
-    return round(max(available, 0), 2)
+    available = total_cash - buy_spent - charges_total + sell_received
+    return round(max(available, 0.0), 2)
 
 
 def check_free_cash_before_buy(df, new_date, qty, price):
@@ -266,28 +283,26 @@ def check_free_cash_before_buy(df, new_date, qty, price):
     if cash_df.empty:
         return False
 
-    # load_cashflows already sanitizes "amount"
-    total_cash = cash_df["amount"].sum()
+    total_cash = float(cash_df["amount"].sum())
 
     df = df.copy()
     df = sanitize_numeric(df, ["qty", "price", "charges"])
+    df["type"] = df["type"].astype(str).str.strip().str.upper()
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
     past = df[df["date"] <= pd.to_datetime(new_date)].copy()
-
-    # FIX: compute amount column before filtering
     past["amount"] = past["qty"] * past["price"]
 
-    buy_spent = past.loc[past["type"] == "BUY", "amount"].sum()
-    sell_received = past.loc[past["type"] == "SELL", "amount"].sum()
-    charges = past["charges"].sum()
-    available = total_cash - buy_spent - charges + sell_received
+    buy_spent     = float(past.loc[past["type"] == "BUY",  "amount"].sum())
+    sell_received = float(past.loc[past["type"] == "SELL", "amount"].sum())
+    charges_total = float(past["charges"].sum())
 
-    return available >= (qty * price)
+    available = total_cash - buy_spent - charges_total + sell_received
+    return available >= float(qty) * float(price)
 
 
 # ================================================================
-# SECTION 7: STREAMLIT APP
+# SECTION 8: STREAMLIT APP
 # ================================================================
 
 st.set_page_config(page_title="Portfolio Tracker", layout="wide")
@@ -303,19 +318,16 @@ if df.empty:
     st.warning("No transactions found. Showing empty dashboard.")
     df = pd.DataFrame(columns=["date", "stock", "qty", "price", "type", "charges", "row_index"])
 
-for col in ["qty", "price", "charges"]:
-    if col in df.columns:
-        df[col] = pd.to_numeric(
-            df[col].astype(str).str.strip().replace({"": "0", "None": "0", "nan": "0"}),
-            errors="coerce"
-        ).fillna(0.0)
-
+# Final safety pass at app level
+df = sanitize_numeric(df, ["qty", "price", "charges"])
+if "type" in df.columns:
+    df["type"] = df["type"].astype(str).str.strip().str.upper()
 if "date" in df.columns:
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
 # ---- CALCULATIONS ----
 invested, value, pnl, holdings = compute_portfolio(df)
-xirr_val = compute_xirr(df)
+xirr_val  = compute_xirr(df)
 free_cash = calculate_free_cash(df)
 
 # ---- TABS ----
@@ -332,11 +344,11 @@ with tab1:
     st.subheader("📈 Portfolio Overview")
 
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Invested", f"₹{invested:,.0f}")
-    col2.metric("Current Value", f"₹{value:,.0f}")
-    col3.metric("P&L", f"₹{pnl:,.0f}")
-    col4.metric("XIRR", f"{xirr_val * 100:.2f}%")
-    col5.metric("Free Cash", f"₹{free_cash:,.0f}")
+    col1.metric("Invested",       f"₹{invested:,.0f}")
+    col2.metric("Current Value",  f"₹{value:,.0f}")
+    col3.metric("P&L",            f"₹{pnl:,.0f}")
+    col4.metric("XIRR",           f"{xirr_val * 100:.2f}%")
+    col5.metric("Free Cash",      f"₹{free_cash:,.0f}")
 
     st.divider()
     st.subheader("📊 Allocation")
@@ -351,7 +363,7 @@ with tab1:
 with tab2:
     st.subheader("➕ Add Transaction")
 
-    search_query = st.text_input("Search Stock (e.g. hdfc, reliance)")
+    search_query  = st.text_input("Search Stock (e.g. hdfc, reliance)")
     stock_options = search_stocks(search_query) if search_query else []
 
     if not stock_options:
@@ -361,15 +373,15 @@ with tab2:
     stock = selected_stock["symbol"]
 
     with st.form("add_form"):
-        date = st.date_input("Date")
-        qty = st.number_input("Qty", min_value=0.0)
-        price = st.number_input("Price", min_value=0.0)
-        type_ = st.selectbox("Type", ["BUY", "SELL"])
+        date    = st.date_input("Date")
+        qty     = st.number_input("Qty",     min_value=0.0)
+        price   = st.number_input("Price",   min_value=0.0)
+        type_   = st.selectbox("Type", ["BUY", "SELL"])
         charges = st.number_input("Charges", min_value=0.0)
-        submit = st.form_submit_button("Add")
+        submit  = st.form_submit_button("Add")
 
         if submit:
-            qty = float(qty)
+            qty   = float(qty)
             price = float(price)
 
             if type_ == "BUY":
@@ -379,19 +391,19 @@ with tab2:
                     st.stop()
 
             add_transaction({
-                "date": str(date),
-                "stock": stock,
-                "qty": qty,
-                "price": price,
-                "type": type_,
-                "charges": charges
+                "date":    str(date),
+                "stock":   stock,
+                "qty":     qty,
+                "price":   price,
+                "type":    type_,
+                "charges": float(charges)
             })
             st.success("Transaction Added!")
             st.rerun()
 
     st.divider()
 
-    cutoff = pd.Timestamp.today() - pd.DateOffset(months=3)
+    cutoff      = pd.Timestamp.today() - pd.DateOffset(months=3)
     df_filtered = df[df["date"] >= cutoff] if "date" in df.columns else df
 
     with st.expander("📊 Existing Transactions (Last 3 Months)", expanded=False):
@@ -402,7 +414,11 @@ with tab2:
     with st.expander("🛠️ Edit / Delete Transactions", expanded=False):
         st.subheader("🗑️ Delete Transaction")
 
-        del_row = st.selectbox("Select row to delete", df["row_index"], format_func=lambda x: f"Row {x}")
+        del_row = st.selectbox(
+            "Select row to delete",
+            df["row_index"],
+            format_func=lambda x: f"Row {x}"
+        )
         if st.button("Delete Transaction"):
             delete_transaction(del_row)
             st.success("Deleted!")
@@ -418,22 +434,22 @@ with tab2:
             edit_data = filtered.iloc[0]
 
             with st.form("edit_form"):
-                date = st.date_input("Date", value=pd.to_datetime(edit_data["date"]))
-                stock_edit = st.text_input("Stock", value=edit_data["stock"])
-                qty = st.number_input("Qty", value=float(edit_data["qty"]))
-                price = st.number_input("Price", value=float(edit_data["price"]))
-                type_ = st.selectbox("Type", ["BUY", "SELL"])
-                charges = st.number_input("Charges", value=float(edit_data["charges"]))
-                update = st.form_submit_button("Update")
+                date       = st.date_input("Date",    value=pd.to_datetime(edit_data["date"]))
+                stock_edit = st.text_input("Stock",   value=edit_data["stock"])
+                qty        = st.number_input("Qty",   value=float(edit_data["qty"]))
+                price      = st.number_input("Price", value=float(edit_data["price"]))
+                type_      = st.selectbox("Type", ["BUY", "SELL"])
+                charges    = st.number_input("Charges", value=float(edit_data["charges"]))
+                update_btn = st.form_submit_button("Update")
 
-                if update:
+                if update_btn:
                     update_transaction(edit_row, {
-                        "date": str(date),
-                        "stock": stock_edit,
-                        "qty": qty,
-                        "price": price,
-                        "type": type_,
-                        "charges": charges
+                        "date":    str(date),
+                        "stock":   stock_edit,
+                        "qty":     float(qty),
+                        "price":   float(price),
+                        "type":    type_,
+                        "charges": float(charges)
                     })
                     st.success("Updated!")
                     st.rerun()
@@ -471,18 +487,18 @@ with tab5:
     st.subheader("➕ Add Funds")
 
     with st.form("fund_form"):
-        date = st.date_input("Date")
+        date   = st.date_input("Date")
         amount = st.number_input("Amount", min_value=0.0)
-        type_ = st.selectbox("Type", ["CREDIT", "DEBIT"])
-        note = st.text_input("Note")
+        type_  = st.selectbox("Type", ["CREDIT", "DEBIT"])
+        note   = st.text_input("Note")
         submit = st.form_submit_button("Add Fund Entry")
 
         if submit:
             add_cashflow_entry({
-                "date": str(date),
-                "type": type_,
-                "amount": amount,
-                "note": note
+                "date":   str(date),
+                "type":   type_,
+                "amount": float(amount),
+                "note":   note
             })
             st.success("Fund Entry Added!")
             st.rerun()
