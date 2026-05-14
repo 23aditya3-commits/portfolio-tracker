@@ -1,259 +1,183 @@
-import streamlit as st
+import yfinance as yf
 import pandas as pd
-import plotly.express as px
+from pyxirr import xirr
+from datetime import datetime
 
-from sheets import (
-    load_transactions,
-    add_transaction,
-    delete_transaction,
-    update_transaction,
-    load_cashflows,
-    add_cashflow_entry
-)
 
-from portfolio import (
-    compute_portfolio,
-    compute_xirr,
-    search_stocks,
-    calculate_free_cash,
-    check_free_cash_before_buy
-)
+# ---------------- PRICE FETCH ----------------
+def get_price(stock):
+    try:
+        return yf.Ticker(stock + ".NS").history(period="1d")["Close"].iloc[-1]
+    except:
+        return 0
 
-# ---------------- PAGE SETUP ----------------
-st.set_page_config(page_title="Portfolio Tracker", layout="wide")
-st.title("📊 My Mutual Fund Tracker")
 
-# ---------------- LOAD DATA ----------------
-df = load_transactions()
+# ---------------- PORTFOLIO ----------------
+def compute_portfolio(df):
 
-# ---------------- CLEAN DATA ----------------
-if not df.empty:
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    if df.empty:
+        return 0, 0, 0, pd.DataFrame()
+
+    df = df.copy()
+
+    # ✅ HARD FIX TYPE ISSUES
+    df["qty"] = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
+    df["price"] = pd.to_numeric(df["price"], errors="coerce").fillna(0)
+
+    df["signed_qty"] = df.apply(
+        lambda x: x["qty"] if x["type"] == "BUY" else -x["qty"],
+        axis=1
+    )
+
+    # BUY invested only
+    buy_df = df[df["type"] == "BUY"]
+    invested = (buy_df["qty"] * buy_df["price"]).sum()
+
+    holdings = df.groupby("stock").agg({
+        "signed_qty": "sum"
+    }).reset_index()
+
+    holdings.columns = ["stock", "qty"]
+    holdings = holdings[holdings["qty"] > 0]
+
+    holdings["cmp"] = holdings["stock"].apply(get_price)
+    holdings["value"] = holdings["qty"] * holdings["cmp"]
+
+    total_value = holdings["value"].sum()
+    pnl = total_value - invested
+
+    return invested, total_value, pnl, holdings
+
+
+# ---------------- XIRR ----------------
+def compute_xirr(df):
+
+    if df.empty:
+        return 0
+
+    df = df.copy()
+
+    df["date"] = pd.to_datetime(df["date"])
     df["qty"] = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
     df["price"] = pd.to_numeric(df["price"], errors="coerce").fillna(0)
     df["charges"] = pd.to_numeric(df.get("charges", 0), errors="coerce").fillna(0)
 
-# Guard clause
-if df.empty:
-    st.warning("No transactions found. Showing empty dashboard.")
+    cashflows = []
 
-    df = pd.DataFrame(columns=[
-        "date", "stock", "qty", "price", "type", "charges", "row_index"
-    ])
+    for _, row in df.iterrows():
 
-# Ensure row_index exists
-if "row_index" not in df.columns:
-    df["row_index"] = range(2, len(df) + 2)
+        amount = row["qty"] * row["price"]
 
-# ---------------- CALCULATIONS ----------------
-invested, value, pnl, holdings = compute_portfolio(df)
-xirr_val = compute_xirr(df)
-free_cash = calculate_free_cash(df)
+        if row["type"] == "BUY":
+            amount = -(amount + row["charges"])
+        else:
+            amount = amount - row["charges"]
 
-# ================= TABS =================
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📈 Dashboard",
-    "➕ Add Transaction",
-    "📌 Holdings",
-    "🧠 Scoring (WIP)",
-    "💰 Funds"
-])
+        cashflows.append((row["date"], amount))
 
-# ================= TAB 1: DASHBOARD =================
-with tab1:
-    st.subheader("📈 Portfolio Overview")
+    total_value = 0
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    holdings = df.groupby("stock")["qty"].sum().reset_index()
 
-    col1.metric("Invested", f"₹{invested:,.0f}")
-    col2.metric("Current Value", f"₹{value:,.0f}")
-    col3.metric("P&L", f"₹{pnl:,.0f}")
-    col4.metric("XIRR", f"{xirr_val*100:.2f}%")
-    col5.metric("Free Cash", f"₹{free_cash:,.0f}")
+    for _, row in holdings.iterrows():
+        if row["qty"] > 0:
+            total_value += row["qty"] * get_price(row["stock"])
 
-    st.divider()
+    cashflows.append((datetime.today(), total_value))
 
-    st.subheader("📊 Allocation")
+    try:
+        return xirr(cashflows)
+    except:
+        return 0
 
-    if not holdings.empty:
-        fig = px.pie(holdings, values="value", names="stock")
-        st.plotly_chart(fig, use_container_width=True)
 
-# ================= TAB 2: ADD TRANSACTION =================
-with tab2:
+# ---------------- STOCK SEARCH ----------------
+def search_stocks(query):
 
-    st.subheader("➕ Add Transaction")
+    if not query:
+        return []
 
-    search_query = st.text_input("Search Stock (e.g. hdfc, reliance)")
-    stock_options = search_stocks(search_query) if search_query else []
+    try:
+        results = yf.Search(query).quotes
 
-    selected_stock = st.selectbox(
-        "Select Stock",
-        stock_options,
-        format_func=lambda x: x["label"] if x else ""
+        stocks = []
+
+        for item in results:
+            symbol = item.get("symbol", "")
+
+            if symbol.endswith(".NS"):
+                stocks.append({
+                    "label": symbol,
+                    "symbol": symbol.replace(".NS", "")
+                })
+
+        return stocks
+
+    except:
+        return []
+
+
+# ---------------- FREE CASH ----------------
+def calculate_free_cash(df, monthly_addition=3000):
+
+    if df.empty:
+        return 0
+
+    df = df.copy()
+
+    df["date"] = pd.to_datetime(df["date"])
+    df["qty"] = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
+    df["price"] = pd.to_numeric(df["price"], errors="coerce").fillna(0)
+    df["charges"] = pd.to_numeric(df.get("charges", 0), errors="coerce").fillna(0)
+
+    start_date = df["date"].min()
+    today = datetime.today()
+
+    months = (
+        (today.year - start_date.year) * 12 +
+        (today.month - start_date.month) + 1
     )
 
-    stock = selected_stock["symbol"] if selected_stock else ""
+    total_added = months * monthly_addition
 
-    with st.form("add_form"):
+    buy_spent = (df[df["type"] == "BUY"]["qty"] * df[df["type"] == "BUY"]["price"]).sum()
+    sell_received = (df[df["type"] == "SELL"]["qty"] * df[df["type"] == "SELL"]["price"]).sum()
+    total_charges = df["charges"].sum()
 
-        date = st.date_input("Date")
-        qty = st.number_input("Qty", min_value=0.0)
-        price = st.number_input("Price", min_value=0.0)
-        type_ = st.selectbox("Type", ["BUY", "SELL"])
-        charges = st.number_input("Charges", min_value=0.0)
+    free_cash = total_added - buy_spent - total_charges + sell_received
 
-        submit = st.form_submit_button("Add")
+    return round(max(free_cash, 0), 2)
 
-        if submit:
 
-            qty_val = float(qty)
-            price_val = float(price)
+# ---------------- VALIDATION ----------------
+def check_free_cash_before_buy(df, new_date, qty, price, monthly_addition=3000):
 
-            # ---------------- VALIDATION ----------------
-            if type_ == "BUY":
-                can_buy = check_free_cash_before_buy(
-                    df,
-                    date,
-                    qty_val,
-                    price_val
-                )
+    df = df.copy()
 
-                if not can_buy:
-                    st.error("❌ Insufficient Free Cash for this transaction!")
-                    st.stop()
+    if df.empty:
+        return False
 
-            add_transaction({
-                "date": str(date),
-                "stock": stock,
-                "qty": qty_val,
-                "price": price_val,
-                "type": type_,
-                "charges": float(charges)
-            })
+    df["date"] = pd.to_datetime(df["date"])
+    new_date = pd.to_datetime(new_date)
 
-            st.success("Transaction Added!")
-            st.rerun()
+    past = df[df["date"] <= new_date]
 
-    st.divider()
+    if past.empty:
+        return False
 
-    # ---------------- EXISTING (LAST 3 MONTHS) ----------------
-    df_filtered = df.copy()
-    df_filtered["date"] = pd.to_datetime(df_filtered["date"], errors="coerce")
+    start_date = past["date"].min()
 
-    cutoff = pd.Timestamp.today() - pd.DateOffset(months=3)
-    df_filtered = df_filtered[df_filtered["date"] >= cutoff]
+    months = (
+        (new_date.year - start_date.year) * 12 +
+        (new_date.month - start_date.month) + 1
+    )
 
-    with st.expander("📊 Existing Transactions (Last 3 Months)", expanded=False):
-        st.dataframe(df_filtered, use_container_width=True)
+    total_cash = months * monthly_addition
 
-    st.divider()
+    buy_spent = (past[past["type"] == "BUY"]["qty"] * past[past["type"] == "BUY"]["price"]).sum()
+    sell_received = (past[past["type"] == "SELL"]["qty"] * past[past["type"] == "SELL"]["price"]).sum()
+    charges = past["charges"].sum()
 
-    # ---------------- EDIT / DELETE ----------------
-    with st.expander("🛠️ Edit / Delete Transactions", expanded=False):
+    available_cash = total_cash - buy_spent - charges + sell_received
 
-        st.subheader("🗑️ Delete Transaction")
-
-        del_row = st.selectbox(
-            "Select row to delete",
-            df["row_index"],
-            format_func=lambda x: f"Row {x}"
-        )
-
-        if st.button("Delete Transaction"):
-            delete_transaction(del_row)
-            st.success("Deleted!")
-            st.rerun()
-
-        st.divider()
-
-        st.subheader("✏️ Edit Transaction")
-
-        edit_row = st.selectbox(
-            "Select row to edit",
-            df["row_index"],
-            key="edit_row"
-        )
-
-        filtered = df[df["row_index"] == edit_row]
-
-        if filtered.empty:
-            st.warning("Selected row not found.")
-        else:
-            edit_data = filtered.iloc[0]
-
-            with st.form("edit_form"):
-
-                date = st.date_input("Date", value=pd.to_datetime(edit_data["date"]))
-                stock_edit = st.text_input("Stock", value=edit_data["stock"])
-                qty = st.number_input("Qty", value=float(edit_data["qty"]))
-                price = st.number_input("Price", value=float(edit_data["price"]))
-                type_ = st.selectbox("Type", ["BUY", "SELL"])
-                charges = st.number_input("Charges", value=float(edit_data["charges"]))
-
-                update = st.form_submit_button("Update")
-
-                if update:
-                    update_transaction(edit_row, {
-                        "date": str(date),
-                        "stock": stock_edit,
-                        "qty": float(qty),
-                        "price": float(price),
-                        "type": type_,
-                        "charges": float(charges)
-                    })
-                    st.success("Updated!")
-                    st.rerun()
-
-# ================= TAB 3: HOLDINGS =================
-with tab3:
-    st.subheader("📌 Holdings Breakdown")
-    st.dataframe(holdings, use_container_width=True)
-
-# ================= TAB 4: SCORING =================
-with tab4:
-    st.subheader("🧠 Stock Scoring Engine (Coming Next)")
-
-    st.info("""
-    Scoring system:
-    - Fundamentals (40)
-    - Valuation (25)
-    - Technical (20)
-    - Macro (15)
-    """)
-
-# ================= TAB 5: FUNDS =================
-with tab5:
-
-    st.subheader("💰 Add Funds (Cash In)")
-
-    with st.form("fund_form"):
-
-        date = st.date_input("Date")
-        amount = st.number_input("Amount", min_value=0.0)
-        note = st.text_input("Note", "SIP / Deposit")
-
-        submit = st.form_submit_button("Add Funds")
-
-        if submit:
-
-            if amount <= 0:
-                st.error("Amount must be greater than 0")
-                st.stop()
-
-            add_cashflow_entry({
-                "date": str(date),
-                "type": "CREDIT",
-                "amount": float(amount),
-                "note": note
-            })
-
-            st.success("Funds Added!")
-            st.rerun()
-
-    st.divider()
-
-    st.subheader("📊 Cashflow History")
-
-    cash_df = load_cashflows()
-    st.dataframe(cash_df, use_container_width=True)
+    return available_cash >= (qty * price)
