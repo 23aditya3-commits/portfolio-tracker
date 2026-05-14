@@ -1,9 +1,10 @@
 import yfinance as yf
 import pandas as pd
-import yfinance as yf
 from pyxirr import xirr
 from datetime import datetime
 
+
+# ---------------- PRICE FETCH ----------------
 
 def get_price(stock):
 
@@ -15,16 +16,33 @@ def get_price(stock):
         return 0
 
 
+# ---------------- PORTFOLIO CALC ----------------
+
 def compute_portfolio(df):
+
+    if df.empty:
+        return 0, 0, 0, pd.DataFrame()
+
     df["qty"] = df["qty"].astype(float)
     df["price"] = df["price"].astype(float)
 
-    invested = (df["qty"] * df["price"]).sum()
+    # BUY = positive holdings, SELL = negative
+    df["signed_qty"] = df.apply(
+        lambda x: x["qty"] if x["type"] == "BUY" else -x["qty"],
+        axis=1
+    )
 
+    # invested capital (only BUY side)
+    invested = (df[df["type"] == "BUY"]["qty"] * df[df["type"] == "BUY"]["price"]).sum()
+
+    # holdings net qty
     holdings = df.groupby("stock").agg({
-        "qty": "sum",
-        "price": "mean"
+        "signed_qty": "sum"
     }).reset_index()
+
+    holdings.columns = ["stock", "qty"]
+
+    holdings = holdings[holdings["qty"] > 0]
 
     holdings["cmp"] = holdings["stock"].apply(get_price)
     holdings["value"] = holdings["qty"] * holdings["cmp"]
@@ -35,21 +53,49 @@ def compute_portfolio(df):
     return invested, total_value, pnl, holdings
 
 
+# ---------------- XIRR (FIXED + REALISTIC) ----------------
+
 def compute_xirr(df):
+
+    if df.empty:
+        return 0
+
+    df["date"] = pd.to_datetime(df["date"])
+    df["qty"] = df["qty"].astype(float)
+    df["price"] = df["price"].astype(float)
+    df["charges"] = df.get("charges", 0).astype(float)
+
     cashflows = []
 
     for _, row in df.iterrows():
-        amt = -(row["qty"] * row["price"])
-        cashflows.append((pd.to_datetime(row["date"]), amt))
 
-    # current value as inflow
-    total = sum(df["qty"] * df["price"])
-    cashflows.append((datetime.today(), total))
+        amount = row["qty"] * row["price"]
+
+        if row["type"] == "BUY":
+            amount = -(amount + row["charges"])
+        else:
+            amount = amount - row["charges"]
+
+        cashflows.append((row["date"], amount))
+
+    # current portfolio value
+    total_value = 0
+
+    holdings = df.groupby("stock")["qty"].sum().reset_index()
+
+    for _, row in holdings.iterrows():
+        if row["qty"] > 0:
+            total_value += row["qty"] * get_price(row["stock"])
+
+    cashflows.append((datetime.today(), total_value))
 
     try:
         return xirr(cashflows)
     except:
         return 0
+
+
+# ---------------- STOCK SEARCH ----------------
 
 def search_stocks(query):
 
@@ -76,3 +122,42 @@ def search_stocks(query):
 
     except:
         return []
+
+
+# ---------------- FREE CASH SYSTEM ----------------
+
+def calculate_free_cash(df, monthly_addition=3000):
+
+    if df.empty:
+        return monthly_addition
+
+    df["date"] = pd.to_datetime(df["date"])
+    df["qty"] = df["qty"].astype(float)
+    df["price"] = df["price"].astype(float)
+    df["charges"] = df.get("charges", 0).astype(float)
+
+    start_date = df["date"].min()
+    today = datetime.today()
+
+    months = (
+        (today.year - start_date.year) * 12 +
+        (today.month - start_date.month) + 1
+    )
+
+    total_added = months * monthly_addition
+
+    buy_spent = (
+        df[df["type"] == "BUY"]["qty"] *
+        df[df["type"] == "BUY"]["price"]
+    ).sum()
+
+    sell_received = (
+        df[df["type"] == "SELL"]["qty"] *
+        df[df["type"] == "SELL"]["price"]
+    ).sum()
+
+    total_charges = df["charges"].sum()
+
+    free_cash = total_added - buy_spent - total_charges + sell_received
+
+    return round(free_cash, 2)
