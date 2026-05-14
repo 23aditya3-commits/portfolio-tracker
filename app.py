@@ -236,7 +236,7 @@ with tab5:
 
     st.subheader("💰 Funds Management")
 
-    cf = load_cashflow()
+    cf = load_cashflows()
 
     st.write("### Cashflow History")
     st.dataframe(cf, use_container_width=True)
