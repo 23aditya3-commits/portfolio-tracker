@@ -17,16 +17,19 @@ from portfolio import (
     check_free_cash_before_buy
 )
 
+# ---------------- PAGE SETUP ----------------
 st.set_page_config(page_title="Portfolio Tracker", layout="wide")
-
 st.title("📊 My Mutual Fund Tracker")
 
 # ---------------- LOAD DATA ----------------
 df = load_transactions()
 
-# Ensure date is clean
+# Ensure proper types (IMPORTANT FIX)
 if not df.empty:
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["qty"] = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
+    df["price"] = pd.to_numeric(df["price"], errors="coerce").fillna(0)
+    df["charges"] = pd.to_numeric(df.get("charges", 0), errors="coerce").fillna(0)
 
 # Guard clause
 if df.empty:
@@ -43,7 +46,7 @@ if "row_index" not in df.columns:
 # ---------------- CALCULATIONS ----------------
 invested, value, pnl, holdings = compute_portfolio(df)
 xirr_val = compute_xirr(df)
-free_cash = calculate_free_cash(df) if not df.empty else 0
+free_cash = calculate_free_cash(df)
 
 # ================= TABS =================
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -55,6 +58,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 
 # ================= TAB 1 =================
 with tab1:
+
     st.subheader("📈 Portfolio Overview")
 
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -104,7 +108,7 @@ with tab2:
             qty_val = float(qty)
             price_val = float(price)
 
-            # ✅ BUY validation only (SELL always allowed)
+            # ---------------- FIXED VALIDATION ----------------
             if type_ == "BUY":
 
                 can_buy = check_free_cash_before_buy(
@@ -118,13 +122,14 @@ with tab2:
                     st.error("❌ Insufficient Free Cash for this transaction!")
                     st.stop()
 
+            # ---------------- ADD TRANSACTION ----------------
             add_transaction({
                 "date": str(date),
                 "stock": stock,
                 "qty": qty_val,
                 "price": price_val,
                 "type": type_,
-                "charges": charges
+                "charges": float(charges)
             })
 
             st.success("Transaction Added!")
@@ -132,7 +137,7 @@ with tab2:
 
     st.divider()
 
-    # ---------------- EXISTING ----------------
+    # ---------------- LAST 3 MONTHS ----------------
     cutoff_date = pd.Timestamp.today() - pd.DateOffset(months=3)
 
     df_filtered = df[df["date"] >= cutoff_date].copy()
@@ -190,10 +195,10 @@ with tab2:
                     update_transaction(edit_row, {
                         "date": str(date),
                         "stock": stock_edit,
-                        "qty": qty,
-                        "price": price,
+                        "qty": float(qty),
+                        "price": float(price),
                         "type": type_,
-                        "charges": charges
+                        "charges": float(charges)
                     })
                     st.success("Updated!")
                     st.rerun()
