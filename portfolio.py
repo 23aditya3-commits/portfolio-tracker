@@ -3,6 +3,8 @@ import pandas as pd
 from pyxirr import xirr
 from datetime import datetime
 
+from sheets import load_cashflows   # ✅ IMPORTANT FIX
+
 
 # ---------------- PRICE FETCH ----------------
 
@@ -11,7 +13,6 @@ def get_price(stock):
     try:
         return yf.Ticker(stock + ".NS") \
             .history(period="1d")["Close"].iloc[-1]
-
     except:
         return 0
 
@@ -127,29 +128,27 @@ def search_stocks(query):
         return []
 
 
-# ---------------- FREE CASH (DISPLAY ONLY - FIXED) ----------------
+# ---------------- REAL CASH SYSTEM (FIXED CORE) ----------------
 
-def calculate_free_cash(df, monthly_addition=3000):
+def calculate_free_cash(df):
+
+    cash_df = load_cashflows()
+
+    if cash_df.empty:
+        return 0
+
+    cash_df = cash_df.copy()
+    cash_df["amount"] = cash_df["amount"].astype(float)
+
+    total_cash = cash_df["amount"].sum()
 
     if df.empty:
-        return 0   # ✅ FIX: no fake cash before first transaction
+        return round(total_cash, 2)
 
     df = df.copy()
-
-    df["date"] = pd.to_datetime(df["date"])
     df["qty"] = df["qty"].astype(float)
     df["price"] = df["price"].astype(float)
     df["charges"] = df.get("charges", 0).astype(float)
-
-    start_date = df["date"].min()
-    today = datetime.today()
-
-    months = (
-        (today.year - start_date.year) * 12 +
-        (today.month - start_date.month) + 1
-    )
-
-    total_added = months * monthly_addition
 
     buy_spent = (
         df[df["type"] == "BUY"]["qty"] *
@@ -161,38 +160,29 @@ def calculate_free_cash(df, monthly_addition=3000):
         df[df["type"] == "SELL"]["price"]
     ).sum()
 
-    total_charges = df["charges"].sum()
+    available = total_cash - buy_spent - df["charges"].sum() + sell_received
 
-    free_cash = total_added - buy_spent - total_charges + sell_received
-
-    return round(max(free_cash, 0), 2)
+    return round(max(available, 0), 2)
 
 
-# ---------------- CASH VALIDATION (FIXED CORE LOGIC) ----------------
+# ---------------- CASH VALIDATION (FINAL FIX) ----------------
 
-def check_free_cash_before_buy(df, new_date, qty, price, monthly_addition=3000):
+def check_free_cash_before_buy(df, new_date, qty, price):
+
+    cash_df = load_cashflows()
+
+    if cash_df.empty:
+        return False   # no money in system → block BUY
+
+    cash_df = cash_df.copy()
+    cash_df["amount"] = cash_df["amount"].astype(float)
+
+    total_cash = cash_df["amount"].sum()
 
     df = df.copy()
-
-    if df.empty:
-        return False   # ❗ FIX: cannot allow BUY with imaginary cash
-
     df["date"] = pd.to_datetime(df["date"])
-    new_date = pd.to_datetime(new_date)
 
-    past = df[df["date"] <= new_date]
-
-    if past.empty:
-        return False
-
-    start_date = past["date"].min()
-
-    months = (
-        (new_date.year - start_date.year) * 12 +
-        (new_date.month - start_date.month) + 1
-    )
-
-    total_cash = months * monthly_addition
+    past = df[df["date"] <= pd.to_datetime(new_date)]
 
     buy_spent = (
         past[past["type"] == "BUY"]["qty"] *
@@ -206,6 +196,6 @@ def check_free_cash_before_buy(df, new_date, qty, price, monthly_addition=3000):
 
     charges = past["charges"].sum()
 
-    available_cash = total_cash - buy_spent - charges + sell_received
+    available = total_cash - buy_spent - charges + sell_received
 
-    return available_cash >= (qty * price)
+    return available >= (qty * price)
