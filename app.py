@@ -229,7 +229,8 @@ def compute_xirr(df):
     cashflows.append((datetime.today(), float(total_value)))
 
     try:
-        return xirr(cashflows)
+        result = xirr(cashflows)
+        return float(result) if result is not None else 0.0
     except Exception:
         return 0.0
 
@@ -347,7 +348,7 @@ with tab1:
     col1.metric("Invested",       f"₹{invested:,.0f}")
     col2.metric("Current Value",  f"₹{value:,.0f}")
     col3.metric("P&L",            f"₹{pnl:,.0f}")
-    col4.metric("XIRR",           f"{xirr_val * 100:.2f}%")
+    col4.metric("XIRR",           f"{(xirr_val or 0.0) * 100:.2f}%")
     col5.metric("Free Cash",      f"₹{free_cash:,.0f}")
 
     st.divider()
