@@ -189,23 +189,29 @@ def compute_xirr(df):
     df = sanitize_numeric(df, ["qty", "price", "charges"])
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
+    # pyxirr requires plain Python datetime + plain Python float — not pandas/numpy types
     cashflows = []
     for _, row in df.iterrows():
-        amount = row["qty"] * row["price"]
-        if row["type"] == "BUY":
-            amount = -(amount + row["charges"])
+        if pd.isnull(row["date"]):
+            continue
+        amount = float(row["qty"]) * float(row["price"])
+        if str(row["type"]).strip().upper() == "BUY":
+            amount = -(amount + float(row["charges"]))
         else:
-            amount = amount - row["charges"]
-        cashflows.append((row["date"], amount))
+            amount = amount - float(row["charges"])
+        cashflows.append((row["date"].to_pydatetime(), amount))
+
+    if not cashflows:
+        return 0
 
     holdings = df.groupby("stock")["qty"].sum().reset_index()
     total_value = sum(
-        row["qty"] * get_price(row["stock"])
+        float(row["qty"]) * float(get_price(row["stock"]))
         for _, row in holdings.iterrows()
-        if row["qty"] > 0
+        if float(row["qty"]) > 0
     )
 
-    cashflows.append((datetime.today(), total_value))
+    cashflows.append((datetime.today(), float(total_value)))
 
     try:
         return xirr(cashflows)
