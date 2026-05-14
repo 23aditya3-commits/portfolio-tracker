@@ -6,7 +6,9 @@ from sheets import (
     load_transactions,
     add_transaction,
     delete_transaction,
-    update_transaction
+    update_transaction,
+    load_cashflows,
+    add_cashflow_entry
 )
 
 from portfolio import (
@@ -24,7 +26,7 @@ st.title("📊 My Mutual Fund Tracker")
 # ---------------- LOAD DATA ----------------
 df = load_transactions()
 
-# Ensure proper types (IMPORTANT FIX)
+# ---------------- CLEAN DATA ----------------
 if not df.empty:
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df["qty"] = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
@@ -49,16 +51,16 @@ xirr_val = compute_xirr(df)
 free_cash = calculate_free_cash(df)
 
 # ================= TABS =================
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📈 Dashboard",
     "➕ Add Transaction",
     "📌 Holdings",
-    "🧠 Scoring (WIP)"
+    "🧠 Scoring (WIP)",
+    "💰 Funds"
 ])
 
-# ================= TAB 1 =================
+# ================= TAB 1: DASHBOARD =================
 with tab1:
-
     st.subheader("📈 Portfolio Overview")
 
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -77,7 +79,7 @@ with tab1:
         fig = px.pie(holdings, values="value", names="stock")
         st.plotly_chart(fig, use_container_width=True)
 
-# ================= TAB 2 =================
+# ================= TAB 2: ADD TRANSACTION =================
 with tab2:
 
     st.subheader("➕ Add Transaction")
@@ -108,9 +110,8 @@ with tab2:
             qty_val = float(qty)
             price_val = float(price)
 
-            # ---------------- FIXED VALIDATION ----------------
+            # ---------------- VALIDATION ----------------
             if type_ == "BUY":
-
                 can_buy = check_free_cash_before_buy(
                     df,
                     date,
@@ -122,7 +123,6 @@ with tab2:
                     st.error("❌ Insufficient Free Cash for this transaction!")
                     st.stop()
 
-            # ---------------- ADD TRANSACTION ----------------
             add_transaction({
                 "date": str(date),
                 "stock": stock,
@@ -137,10 +137,12 @@ with tab2:
 
     st.divider()
 
-    # ---------------- LAST 3 MONTHS ----------------
-    cutoff_date = pd.Timestamp.today() - pd.DateOffset(months=3)
+    # ---------------- EXISTING (LAST 3 MONTHS) ----------------
+    df_filtered = df.copy()
+    df_filtered["date"] = pd.to_datetime(df_filtered["date"], errors="coerce")
 
-    df_filtered = df[df["date"] >= cutoff_date].copy()
+    cutoff = pd.Timestamp.today() - pd.DateOffset(months=3)
+    df_filtered = df_filtered[df_filtered["date"] >= cutoff]
 
     with st.expander("📊 Existing Transactions (Last 3 Months)", expanded=False):
         st.dataframe(df_filtered, use_container_width=True)
@@ -176,7 +178,7 @@ with tab2:
         filtered = df[df["row_index"] == edit_row]
 
         if filtered.empty:
-            st.warning("Selected row not found (it may have been deleted).")
+            st.warning("Selected row not found.")
         else:
             edit_data = filtered.iloc[0]
 
@@ -203,12 +205,12 @@ with tab2:
                     st.success("Updated!")
                     st.rerun()
 
-# ================= TAB 3 =================
+# ================= TAB 3: HOLDINGS =================
 with tab3:
     st.subheader("📌 Holdings Breakdown")
     st.dataframe(holdings, use_container_width=True)
 
-# ================= TAB 4 =================
+# ================= TAB 4: SCORING =================
 with tab4:
     st.subheader("🧠 Stock Scoring Engine (Coming Next)")
 
@@ -220,4 +222,38 @@ with tab4:
     - Macro (15)
     """)
 
-    st.warning("Next step: build scoring + auto rebalance engine")
+# ================= TAB 5: FUNDS =================
+with tab5:
+
+    st.subheader("💰 Add Funds (Cash In)")
+
+    with st.form("fund_form"):
+
+        date = st.date_input("Date")
+        amount = st.number_input("Amount", min_value=0.0)
+        note = st.text_input("Note", "SIP / Deposit")
+
+        submit = st.form_submit_button("Add Funds")
+
+        if submit:
+
+            if amount <= 0:
+                st.error("Amount must be greater than 0")
+                st.stop()
+
+            add_cashflow_entry({
+                "date": str(date),
+                "type": "CREDIT",
+                "amount": float(amount),
+                "note": note
+            })
+
+            st.success("Funds Added!")
+            st.rerun()
+
+    st.divider()
+
+    st.subheader("📊 Cashflow History")
+
+    cash_df = load_cashflows()
+    st.dataframe(cash_df, use_container_width=True)
