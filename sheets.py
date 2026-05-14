@@ -4,7 +4,7 @@ import pandas as pd
 from oauth2client.service_account import ServiceAccountCredentials
 
 
-# ---------------- GOOGLE SHEETS CONNECTION ----------------
+# ---------------- GOOGLE CLIENT ----------------
 
 def get_client():
 
@@ -23,23 +23,20 @@ def get_client():
     return gspread.authorize(creds)
 
 
-# ---------------- OPEN SHEETS ----------------
+# ---------------- SHEETS ----------------
 
 def get_sheet():
-
     client = get_client()
     sheet_name = st.secrets["sheets"]["sheet_name"]
-
     return client.open(sheet_name).worksheet("transactions")
 
 
 def get_cashflow_sheet():
-
     client = get_client()
     sheet_name = st.secrets["sheets"]["sheet_name"]
 
-    # ✅ FIX: standard name
-    return client.open(sheet_name).worksheet("load_cashflow")
+    # ✅ FIXED: correct tab name MUST exist in Google Sheet
+    return client.open(sheet_name).worksheet("cashflow")
 
 
 # ---------------- TRANSACTIONS ----------------
@@ -103,7 +100,6 @@ def update_transaction(row_index, row):
 def clear_transactions():
 
     sheet = get_sheet()
-
     sheet.clear()
 
     sheet.append_row([
@@ -111,9 +107,9 @@ def clear_transactions():
     ])
 
 
-# ---------------- CASHFLOW (NEW SYSTEM) ----------------
+# ---------------- CASHFLOW SYSTEM (FIXED) ----------------
 
-def load_cashflows():
+def load_cashflow():
 
     sheet = get_cashflow_sheet()
     data = sheet.get_all_records()
@@ -143,7 +139,6 @@ def add_cashflow_entry(row):
 def clear_cashflow():
 
     sheet = get_cashflow_sheet()
-
     sheet.clear()
 
     sheet.append_row([
