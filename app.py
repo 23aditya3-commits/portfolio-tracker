@@ -13,7 +13,8 @@ from portfolio import (
     compute_portfolio,
     compute_xirr,
     search_stocks,
-    calculate_free_cash
+    calculate_free_cash,
+    check_free_cash_before_buy
 )
 
 st.set_page_config(page_title="Portfolio Tracker", layout="wide")
@@ -48,7 +49,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "🧠 Scoring (WIP)"
 ])
 
-# ================= TAB 1: DASHBOARD =================
+# ================= TAB 1 =================
 with tab1:
     st.subheader("📈 Portfolio Overview")
 
@@ -68,14 +69,12 @@ with tab1:
         fig = px.pie(holdings, values="value", names="stock")
         st.plotly_chart(fig, use_container_width=True)
 
-# ================= TAB 2: UPDATED CLEAN UI =================
+# ================= TAB 2 =================
 with tab2:
 
-    # ---------------- ADD (FIRST) ----------------
     st.subheader("➕ Add Transaction")
 
     search_query = st.text_input("Search Stock (e.g. hdfc, reliance)")
-
     stock_options = search_stocks(search_query) if search_query else []
 
     selected_stock = st.selectbox(
@@ -98,28 +97,27 @@ with tab2:
 
         if submit:
 
-    from portfolio import check_free_cash_before_buy
+            # ✅ FIXED: validation INSIDE correct block
+            can_buy = check_free_cash_before_buy(
+                df,
+                date,
+                qty,
+                price
+            )
 
-    can_buy = check_free_cash_before_buy(
-        df,
-        date,
-        qty,
-        price
-    )
-
-    if type_ == "BUY" and not can_buy:
-        st.error("❌ Insufficient Free Cash for this transaction!")
-    else:
-        add_transaction({
-            "date": str(date),
-            "stock": stock,
-            "qty": qty,
-            "price": price,
-            "type": type_,
-            "charges": charges
-        })
-        st.success("Transaction Added!")
-        st.rerun()
+            if type_ == "BUY" and not can_buy:
+                st.error("❌ Insufficient Free Cash for this transaction!")
+            else:
+                add_transaction({
+                    "date": str(date),
+                    "stock": stock,
+                    "qty": qty,
+                    "price": price,
+                    "type": type_,
+                    "charges": charges
+                })
+                st.success("Transaction Added!")
+                st.rerun()
 
     st.divider()
 
@@ -135,7 +133,7 @@ with tab2:
 
     st.divider()
 
-    # ---------------- EDIT / DELETE (COLLAPSED LAST) ----------------
+    # ---------------- EDIT / DELETE ----------------
     with st.expander("🛠️ Edit / Delete Transactions", expanded=False):
 
         st.subheader("🗑️ Delete Transaction")
@@ -191,12 +189,12 @@ with tab2:
                     st.success("Updated!")
                     st.rerun()
 
-# ================= TAB 3: HOLDINGS =================
+# ================= TAB 3 =================
 with tab3:
     st.subheader("📌 Holdings Breakdown")
     st.dataframe(holdings, use_container_width=True)
 
-# ================= TAB 4: SCORING =================
+# ================= TAB 4 =================
 with tab4:
     st.subheader("🧠 Stock Scoring Engine (Coming Next)")
 
@@ -206,11 +204,6 @@ with tab4:
     - Valuation (25)
     - Technical (20)
     - Macro (15)
-
-    Rules:
-    - > 80 → Strong Buy
-    - 70–80 → Hold
-    - < 70 → Exit
     """)
 
     st.warning("Next step: build scoring + auto rebalance engine")
