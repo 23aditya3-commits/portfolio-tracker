@@ -13,7 +13,7 @@ from portfolio import (
     compute_portfolio,
     compute_xirr,
     search_stocks,
-    calculate_free_cash   # ✅ NEW ADDED
+    calculate_free_cash
 )
 
 st.set_page_config(page_title="Portfolio Tracker", layout="wide")
@@ -23,7 +23,7 @@ st.title("📊 My Mutual Fund Tracker")
 # ---------------- LOAD DATA ----------------
 df = load_transactions()
 
-# Guard clause (VERY IMPORTANT)
+# Guard clause
 if df.empty:
     st.warning("No transactions found. Showing empty dashboard.")
 
@@ -38,8 +38,6 @@ if "row_index" not in df.columns:
 # ---------------- CALCULATIONS ----------------
 invested, value, pnl, holdings = compute_portfolio(df)
 xirr_val = compute_xirr(df)
-
-# ✅ NEW: Free Cash calculation
 free_cash = calculate_free_cash(df)
 
 # ================= TABS =================
@@ -54,15 +52,12 @@ tab1, tab2, tab3, tab4 = st.tabs([
 with tab1:
     st.subheader("📈 Portfolio Overview")
 
-    # ✅ UPDATED: 5 columns instead of 4
     col1, col2, col3, col4, col5 = st.columns(5)
 
     col1.metric("Invested", f"₹{invested:,.0f}")
     col2.metric("Current Value", f"₹{value:,.0f}")
     col3.metric("P&L", f"₹{pnl:,.0f}")
     col4.metric("XIRR", f"{xirr_val*100:.2f}%")
-
-    # ✅ NEW: Free Cash
     col5.metric("Free Cash", f"₹{free_cash:,.0f}")
 
     st.divider()
@@ -73,15 +68,10 @@ with tab1:
         fig = px.pie(holdings, values="value", names="stock")
         st.plotly_chart(fig, use_container_width=True)
 
-# ================= TAB 2: ADD / EDIT / DELETE =================
+# ================= TAB 2: UPDATED CLEAN UI =================
 with tab2:
 
-    st.subheader("📊 Existing Transactions")
-    st.dataframe(df, use_container_width=True)
-
-    st.divider()
-
-    # ================= ADD SECTION =================
+    # ---------------- ADD (FIRST) ----------------
     st.subheader("➕ Add Transaction")
 
     search_query = st.text_input("Search Stock (e.g. hdfc, reliance)")
@@ -120,10 +110,21 @@ with tab2:
 
     st.divider()
 
-    # ================= COLLAPSIBLE EDIT/DELETE =================
-    with st.expander("🛠️ Edit / Delete Transactions (Advanced)", expanded=False):
+    # ---------------- EXISTING (COLLAPSED + 3 MONTH FILTER) ----------------
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
-        # ---------------- DELETE ----------------
+    cutoff_date = pd.Timestamp.today() - pd.DateOffset(months=3)
+
+    df_filtered = df[df["date"] >= cutoff_date].copy()
+
+    with st.expander("📊 Existing Transactions (Last 3 Months)", expanded=False):
+        st.dataframe(df_filtered, use_container_width=True)
+
+    st.divider()
+
+    # ---------------- EDIT / DELETE (COLLAPSED LAST) ----------------
+    with st.expander("🛠️ Edit / Delete Transactions", expanded=False):
+
         st.subheader("🗑️ Delete Transaction")
 
         del_row = st.selectbox(
@@ -139,7 +140,6 @@ with tab2:
 
         st.divider()
 
-        # ---------------- EDIT ----------------
         st.subheader("✏️ Edit Transaction")
 
         edit_row = st.selectbox(
@@ -177,13 +177,13 @@ with tab2:
                     })
                     st.success("Updated!")
                     st.rerun()
+
 # ================= TAB 3: HOLDINGS =================
 with tab3:
     st.subheader("📌 Holdings Breakdown")
-
     st.dataframe(holdings, use_container_width=True)
 
-# ================= TAB 4: SCORING PLACEHOLDER =================
+# ================= TAB 4: SCORING =================
 with tab4:
     st.subheader("🧠 Stock Scoring Engine (Coming Next)")
 
