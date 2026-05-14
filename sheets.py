@@ -3,6 +3,7 @@ import gspread
 import pandas as pd
 from oauth2client.service_account import ServiceAccountCredentials
 
+
 # ---------------- GOOGLE SHEETS CONNECTION ----------------
 
 def get_client():
@@ -24,7 +25,7 @@ def get_client():
     return client
 
 
-# ---------------- OPEN SHEET ----------------
+# ---------------- OPEN SHEETS ----------------
 
 def get_sheet():
 
@@ -35,7 +36,16 @@ def get_sheet():
     return client.open(sheet_name).worksheet("transactions")
 
 
-# ---------------- LOAD DATA (WITH INDEX) ----------------
+def get_cashflow_sheet():
+
+    client = get_client()
+
+    sheet_name = st.secrets["sheets"]["sheet_name"]
+
+    return client.open(sheet_name).worksheet("cashflow")
+
+
+# ---------------- LOAD TRANSACTIONS ----------------
 
 def load_transactions():
 
@@ -45,17 +55,44 @@ def load_transactions():
 
     df = pd.DataFrame(data)
 
-    # Handle empty sheet
     if df.empty:
         return pd.DataFrame(columns=["date", "stock", "qty", "price", "type", "charges"])
 
-    # Normalize column names safely
     df.columns = [str(c).strip().lower() for c in df.columns]
 
-    # Add sheet row index (VERY IMPORTANT for edit/delete)
     df["row_index"] = range(2, len(df) + 2)
 
     return df
+
+
+# ---------------- CASHFLOW FUNCTIONS (NEW) ----------------
+
+def load_cashflow():
+
+    sheet = get_cashflow_sheet()
+
+    data = sheet.get_all_records()
+
+    df = pd.DataFrame(data)
+
+    if df.empty:
+        return pd.DataFrame(columns=["date", "type", "amount", "note"])
+
+    df.columns = [str(c).strip().lower() for c in df.columns]
+
+    return df
+
+
+def add_cashflow_entry(row):
+
+    sheet = get_cashflow_sheet()
+
+    sheet.append_row([
+        row["date"],
+        row["type"],
+        row["amount"],
+        row["note"]
+    ])
 
 
 # ---------------- ADD TRANSACTION ----------------
@@ -102,7 +139,7 @@ def update_transaction(row_index, row):
     )
 
 
-# ---------------- CLEAR ALL DATA (OPTIONAL SAFE RESET) ----------------
+# ---------------- CLEAR TRANSACTIONS ----------------
 
 def clear_transactions():
 
@@ -117,4 +154,20 @@ def clear_transactions():
         "price",
         "type",
         "charges"
+    ])
+
+
+# ---------------- OPTIONAL: CLEAR CASHFLOW ----------------
+
+def clear_cashflow():
+
+    sheet = get_cashflow_sheet()
+
+    sheet.clear()
+
+    sheet.append_row([
+        "date",
+        "type",
+        "amount",
+        "note"
     ])
