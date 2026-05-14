@@ -174,17 +174,9 @@ def compute_portfolio(df):
     df = df.copy()
     df = sanitize_numeric(df, ["qty", "price", "charges"])
     df["type"] = df["type"].astype(str).str.strip().str.upper()
-
     df["amount"] = df["qty"] * df["price"]
 
-    total_buy_cost     = float(df.loc[df["type"] == "BUY",  "amount"].sum())
-    total_sell_proceeds = float(df.loc[df["type"] == "SELL", "amount"].sum())
-    total_charges      = float(df["charges"].sum())
-
-    # Realised P&L from closed positions
-    realised_pnl = total_sell_proceeds - total_buy_cost
-
-    # Net qty per stock for open positions
+    # --- Net qty per stock ---
     multiplier = df["type"].map(lambda t: 1.0 if t == "BUY" else -1.0)
     df["signed_qty"] = df["qty"] * multiplier
 
@@ -193,34 +185,58 @@ def compute_portfolio(df):
     holdings["qty"] = pd.to_numeric(holdings["qty"], errors="coerce").fillna(0.0).astype("float64")
     holdings = holdings[holdings["qty"] > 0].copy()
 
-    # Cost basis only for still-held shares
-    if not holdings.empty:
-        avg_cost = (
-            df[df["type"] == "BUY"]
-            .groupby("stock")
-            .apply(lambda x: (x["qty"] * x["price"]).sum() / x["qty"].sum())
-            .reset_index()
-        )
-        avg_cost.columns = ["stock", "avg_price"]
-        holdings = holdings.merge(avg_cost, on="stock", how="left")
-        holdings["avg_price"] = holdings["avg_price"].fillna(0.0)
-        holdings["invested"]  = holdings["qty"] * holdings["avg_price"]
+    if holdings.empty:
+        # Everything sold — realised P&L only
+        buy_cost        = float(df.loc[df["type"] == "BUY",  "amount"].sum())
+        sell_proceeds   = float(df.loc[df["type"] == "SELL", "amount"].sum())
+        total_charges   = float(df["charges"].sum())
+        realised_pnl    = sell_proceeds - buy_cost - total_charges
+        return 0.0, 0.0, realised_pnl, pd.DataFrame()
 
-        holdings["cmp"] = holdings["stock"].apply(get_price)
-        holdings["cmp"] = pd.to_numeric(holdings["cmp"], errors="coerce").fillna(0.0).astype("float64")
-        holdings["value"] = holdings["qty"] * holdings["cmp"]
-        holdings["pnl"]   = holdings["value"] - holdings["invested"]
+    # --- Avg buy price per stock (for open positions only) ---
+    buys = df[df["type"] == "BUY"].copy()
+    avg_cost = (
+        buys.groupby("stock")
+        .apply(lambda x: (x["qty"] * x["price"]).sum() / x["qty"].sum())
+        .reset_index()
+    )
+    avg_cost.columns = ["stock", "avg_price"]
 
-        invested    = float(holdings["invested"].sum())
-        total_value = float(holdings["value"].sum())
-        unrealised_pnl = total_value - invested
-    else:
-        invested       = 0.0
-        total_value    = 0.0
-        unrealised_pnl = 0.0
+    holdings = holdings.merge(avg_cost, on="stock", how="left")
+    holdings["avg_price"] = pd.to_numeric(holdings["avg_price"], errors="coerce").fillna(0.0)
+    holdings["invested"]  = holdings["qty"] * holdings["avg_price"]
 
-    # Total P&L = unrealised on open positions + realised on closed ones - charges
+    # --- Current market price ---
+    holdings["cmp"] = holdings["stock"].apply(get_price)
+    holdings["cmp"] = pd.to_numeric(holdings["cmp"], errors="coerce").fillna(0.0).astype("float64")
+    holdings["value"] = holdings["qty"] * holdings["cmp"]
+
+    invested    = float(holdings["invested"].sum())
+    total_value = float(holdings["value"].sum())
+
+    # --- P&L ---
+    # Unrealised: current value vs cost of held shares
+    unrealised_pnl = total_value - invested
+
+    # Realised: proceeds from sold shares minus their buy cost
+    sell_df = df[df["type"] == "SELL"].copy()
+    sell_proceeds = float(sell_df["amount"].sum())
+
+    # Cost of shares that were sold (avg buy price * sold qty)
+    sold_cost = 0.0
+    for stock, grp in sell_df.groupby("stock"):
+        avg_row = avg_cost[avg_cost["stock"] == stock]
+        if not avg_row.empty:
+            avg_p = float(avg_row["avg_price"].iloc[0])
+            sold_cost += float(grp["qty"].sum()) * avg_p
+
+    realised_pnl  = sell_proceeds - sold_cost
+    total_charges = float(df["charges"].sum())
+
     pnl = unrealised_pnl + realised_pnl - total_charges
+
+    # Add pnl column to holdings display
+    holdings["pnl"] = (holdings["value"] - holdings["invested"]).round(2)
 
     return invested, total_value, pnl, holdings
 
@@ -233,29 +249,39 @@ def compute_xirr(df):
     df = sanitize_numeric(df, ["qty", "price", "charges"])
     df["type"] = df["type"].astype(str).str.strip().str.upper()
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date"])
+
+    if df.empty:
+        return 0.0
 
     cashflows = []
     for _, row in df.iterrows():
-        if pd.isnull(row["date"]):
-            continue
         amount = float(row["qty"]) * float(row["price"])
         if row["type"] == "BUY":
-            amount = -(amount + float(row["charges"]))
+            # money going OUT (negative), including charges
+            cf = -(amount + float(row["charges"]))
         else:
-            amount = amount - float(row["charges"])
-        # pyxirr needs plain Python datetime, not pandas Timestamp
-        cashflows.append((row["date"].to_pydatetime(), amount))
+            # money coming IN (positive), minus charges
+            cf = amount - float(row["charges"])
+        cashflows.append((row["date"].to_pydatetime(), cf))
 
-    if not cashflows:
-        return 0.0
+    # Terminal value: current market value of open holdings
+    multiplier = df["type"].map(lambda t: 1.0 if t == "BUY" else -1.0)
+    df["signed_qty"] = df["qty"] * multiplier
+    open_holdings = df.groupby("stock")["signed_qty"].sum()
+    open_holdings = open_holdings[open_holdings > 0]
 
-    holdings = df.groupby("stock")["qty"].sum().reset_index()
-    total_value = sum(
-        float(row["qty"]) * get_price(str(row["stock"]))
-        for _, row in holdings.iterrows()
-        if float(row["qty"]) > 0
+    terminal_value = sum(
+        float(qty) * get_price(str(stock))
+        for stock, qty in open_holdings.items()
     )
-    cashflows.append((datetime.today(), float(total_value)))
+
+    # Only add terminal value if there are open positions
+    if terminal_value > 0:
+        cashflows.append((datetime.today(), float(terminal_value)))
+
+    if len(cashflows) < 2:
+        return 0.0
 
     try:
         result = xirr(cashflows)
