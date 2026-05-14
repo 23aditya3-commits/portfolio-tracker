@@ -109,7 +109,7 @@ def clear_transactions():
 
 # ---------------- CASHFLOW SYSTEM (FIXED) ----------------
 
-def load_cashflow():
+def load_cashflows():
 
     sheet = get_cashflow_sheet()
     data = sheet.get_all_records()
