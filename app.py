@@ -808,26 +808,76 @@ with tab1:
 
     st.subheader("📈 Mutual Fund NAV")
 
-    if nav_df is not None and not nav_df.empty:
+if nav_df is not None and not nav_df.empty:
 
-        nav_chart = px.line(
-            nav_df,
-            x="date",
-            y="nav",
-            markers=True,
-            title="NAV Growth"
+    # ==========================
+    # TIME FILTER OPTIONS
+    # ==========================
+
+    range_option = st.radio(
+        "Select Time Range",
+        ["1M", "3M", "6M", "1Y", "5Y", "YTD"],
+        horizontal=True
+    )
+
+    today = pd.Timestamp.today()
+
+    if range_option == "1M":
+        cutoff = today - pd.DateOffset(months=1)
+
+    elif range_option == "3M":
+        cutoff = today - pd.DateOffset(months=3)
+
+    elif range_option == "6M":
+        cutoff = today - pd.DateOffset(months=6)
+
+    elif range_option == "1Y":
+        cutoff = today - pd.DateOffset(years=1)
+
+    elif range_option == "5Y":
+        cutoff = today - pd.DateOffset(years=5)
+
+    elif range_option == "YTD":
+        cutoff = pd.Timestamp(
+            year=today.year,
+            month=1,
+            day=1
         )
 
-        st.plotly_chart(
-            nav_chart,
-            use_container_width=True
-        )
+    nav_filtered = nav_df[
+        nav_df["date"] >= cutoff
+    ].copy()
 
-    else:
+    nav_filtered = nav_filtered.sort_values("date")
 
-        st.info(
-            "NAV history not available yet"
-        )
+    # ==========================
+    # NAV CHART
+    # ==========================
+
+    nav_chart = px.line(
+        nav_filtered,
+        x="date",
+        y="nav",
+        markers=True,
+        title=f"NAV Growth ({range_option})"
+    )
+
+    nav_chart.update_layout(
+        xaxis_title="Date",
+        yaxis_title="NAV",
+        hovermode="x unified"
+    )
+
+    st.plotly_chart(
+        nav_chart,
+        use_container_width=True
+    )
+
+else:
+
+    st.info(
+        "NAV history not available yet"
+    )
 
     st.divider()
 
