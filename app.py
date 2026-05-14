@@ -7,7 +7,7 @@ from sheets import (
     add_transaction,
     delete_transaction,
     update_transaction,
-    load_cashflow,
+    load_cashflows,
     add_cashflow_entry
 )
 
