@@ -187,6 +187,13 @@ def compute_portfolio(df):
 
     holdings["qty"] = holdings["qty"].map(lambda v: float(v) if v else 0.0)
     holdings["cmp"] = holdings["stock"].apply(get_price).map(float)
+
+    # DEBUG — remove once fixed
+    st.write("### DEBUG holdings dtypes", holdings.dtypes.to_dict())
+    st.write("### DEBUG holdings sample", holdings.head())
+    for col in ["qty", "cmp"]:
+        st.write(f"DEBUG {col} values + types:", [(v, type(v).__name__) for v in holdings[col].tolist()])
+
     holdings["value"] = holdings["qty"] * holdings["cmp"]
 
     total_value = float(holdings["value"].sum())
