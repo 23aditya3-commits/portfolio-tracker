@@ -76,13 +76,12 @@ with tab1:
 # ================= TAB 2: ADD / EDIT / DELETE =================
 with tab2:
 
-    st.subheader("➕ Add / Edit / Delete Transactions")
-
+    st.subheader("📊 Existing Transactions")
     st.dataframe(df, use_container_width=True)
 
     st.divider()
 
-    # ---------------- ADD ----------------
+    # ================= ADD SECTION =================
     st.subheader("➕ Add Transaction")
 
     search_query = st.text_input("Search Stock (e.g. hdfc, reliance)")
@@ -121,61 +120,63 @@ with tab2:
 
     st.divider()
 
-    # ---------------- DELETE ----------------
-    st.subheader("🗑️ Delete Transaction")
+    # ================= COLLAPSIBLE EDIT/DELETE =================
+    with st.expander("🛠️ Edit / Delete Transactions (Advanced)", expanded=False):
 
-    del_row = st.selectbox(
-        "Select row to delete",
-        df["row_index"],
-        format_func=lambda x: f"Row {x}"
-    )
+        # ---------------- DELETE ----------------
+        st.subheader("🗑️ Delete Transaction")
 
-    if st.button("Delete Transaction"):
-        delete_transaction(del_row)
-        st.success("Deleted!")
-        st.rerun()
+        del_row = st.selectbox(
+            "Select row to delete",
+            df["row_index"],
+            format_func=lambda x: f"Row {x}"
+        )
 
-    st.divider()
+        if st.button("Delete Transaction"):
+            delete_transaction(del_row)
+            st.success("Deleted!")
+            st.rerun()
 
-    # ---------------- EDIT ----------------
-    st.subheader("✏️ Edit Transaction")
+        st.divider()
 
-    edit_row = st.selectbox(
-        "Select row to edit",
-        df["row_index"],
-        key="edit_row"
-    )
+        # ---------------- EDIT ----------------
+        st.subheader("✏️ Edit Transaction")
 
-    filtered = df[df["row_index"] == edit_row]
+        edit_row = st.selectbox(
+            "Select row to edit",
+            df["row_index"],
+            key="edit_row"
+        )
 
-    if filtered.empty:
-        st.warning("Selected row not found (it may have been deleted).")
-    else:
-        edit_data = filtered.iloc[0]
+        filtered = df[df["row_index"] == edit_row]
 
-        with st.form("edit_form"):
+        if filtered.empty:
+            st.warning("Selected row not found (it may have been deleted).")
+        else:
+            edit_data = filtered.iloc[0]
 
-            date = st.date_input("Date", value=pd.to_datetime(edit_data["date"]))
-            stock_edit = st.text_input("Stock", value=edit_data["stock"])
-            qty = st.number_input("Qty", value=float(edit_data["qty"]))
-            price = st.number_input("Price", value=float(edit_data["price"]))
-            type_ = st.selectbox("Type", ["BUY", "SELL"])
-            charges = st.number_input("Charges", value=float(edit_data["charges"]))
+            with st.form("edit_form"):
 
-            update = st.form_submit_button("Update")
+                date = st.date_input("Date", value=pd.to_datetime(edit_data["date"]))
+                stock_edit = st.text_input("Stock", value=edit_data["stock"])
+                qty = st.number_input("Qty", value=float(edit_data["qty"]))
+                price = st.number_input("Price", value=float(edit_data["price"]))
+                type_ = st.selectbox("Type", ["BUY", "SELL"])
+                charges = st.number_input("Charges", value=float(edit_data["charges"]))
 
-            if update:
-                update_transaction(edit_row, {
-                    "date": str(date),
-                    "stock": stock_edit,
-                    "qty": qty,
-                    "price": price,
-                    "type": type_,
-                    "charges": charges
-                })
-                st.success("Updated!")
-                st.rerun()
+                update = st.form_submit_button("Update")
 
+                if update:
+                    update_transaction(edit_row, {
+                        "date": str(date),
+                        "stock": stock_edit,
+                        "qty": qty,
+                        "price": price,
+                        "type": type_,
+                        "charges": charges
+                    })
+                    st.success("Updated!")
+                    st.rerun()
 # ================= TAB 3: HOLDINGS =================
 with tab3:
     st.subheader("📌 Holdings Breakdown")
