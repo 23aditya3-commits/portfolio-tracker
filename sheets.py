@@ -36,7 +36,7 @@ def get_cashflow_sheet():
     sheet_name = st.secrets["sheets"]["sheet_name"]
 
     # ✅ FIXED: correct tab name MUST exist in Google Sheet
-    return client.open(sheet_name).worksheet("cashflow")
+    return client.open(sheet_name).worksheet("load_cashflows")
 
 
 # ---------------- TRANSACTIONS ----------------
