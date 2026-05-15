@@ -7,7 +7,7 @@ from pyxirr import xirr
 from datetime import datetime
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import time
-
+ 
 
 # ================================================================
 # SECTION 1: HELPERS
