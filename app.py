@@ -6,6 +6,7 @@ import yfinance as yf
 from pyxirr import xirr
 from datetime import datetime
 from oauth2client.service_account import ServiceAccountCredentials
+from datetime import time
 
 
 # ================================================================
@@ -659,15 +660,27 @@ with tab3:
 
 # ================= TAB 4: SCORING =================
 with tab4:
-    st.subheader("🧠 Stock Scoring Engine (Coming Next)")
-    st.info("""
-    Scoring system:
-    - Fundamentals (40)
-    - Valuation (25)
-    - Technical (20)
-    - Macro (15)
-    """)
-    st.warning("Next step: build scoring + auto rebalance engine")
+
+    st.subheader("🧠 Fundamentals Scoring Engine")
+
+    score_df = load_score_history()
+
+    if score_df is not None and not score_df.empty:
+
+        score_df = score_df[
+            score_df["stock"] != "__SESSION__"
+        ]
+
+        latest_scores = (
+            score_df.sort_values("date")
+            .groupby("stock")
+            .tail(1)
+        )
+
+        st.dataframe(latest_scores, use_container_width=True)
+
+    else:
+        st.info("No score history available yet.")
 
 # ================= TAB 5: FUNDS =================
 with tab5:
@@ -696,3 +709,200 @@ with tab5:
             })
             st.success("Fund Entry Added!")
             st.rerun()
+
+# ================================================================
+# SECTION 9: FUNDAMENTALS SCORING ENGINE
+# ================================================================
+def get_score_sheet():
+    client = get_client()
+    sheet_name = st.secrets["sheets"]["sheet_name"]
+    return client.open(sheet_name).worksheet("score_history")
+
+
+def calculate_fundamental_score(stock):
+
+    try:
+        ticker = yf.Ticker(str(stock).strip() + ".NS")
+        info = ticker.info
+
+        # ---- Raw Metrics ----
+        roe = float(info.get("returnOnEquity") or 0) * 100
+        revenue_growth = float(info.get("revenueGrowth") or 0) * 100
+        profit_growth = float(info.get("earningsGrowth") or 0) * 100
+        debt_equity = float(info.get("debtToEquity") or 0)
+
+        margin = float(info.get("operatingMargins") or 0) * 100
+
+        # ---- Score Logic ----
+        score = 0
+
+        if roe > 15:
+            score += 8
+
+        if revenue_growth > 10:
+            score += 10
+
+        if profit_growth > 10:
+            score += 10
+
+        if debt_equity < 1:
+            score += 6
+
+        if margin > 15:
+            score += 6
+
+        return {
+            "stock": stock,
+            "fundamentals": score,
+            "roe": round(roe, 2),
+            "revenue_growth": round(revenue_growth, 2),
+            "profit_growth": round(profit_growth, 2),
+            "debt_equity": round(debt_equity, 2),
+            "margin": round(margin, 2),
+        }
+
+    except Exception:
+        return {
+            "stock": stock,
+            "fundamentals": 0,
+            "roe": 0,
+            "revenue_growth": 0,
+            "profit_growth": 0,
+            "debt_equity": 0,
+            "margin": 0,
+        }
+
+
+def should_update_scores():
+
+    now = datetime.now()
+
+    current_time = now.time()
+
+    # Allowed windows
+    morning_start = time(10, 0)
+    morning_end   = time(10, 15)
+
+    eod_start = time(15, 0)
+    eod_end   = time(15, 15)
+
+    return (
+        morning_start <= current_time <= morning_end
+        or
+        eod_start <= current_time <= eod_end
+    )
+
+
+def load_score_history():
+
+    try:
+        sheet = get_score_sheet()
+
+        data = sheet.get_all_records()
+
+        df = pd.DataFrame(data)
+
+        if df.empty:
+            return pd.DataFrame(columns=[
+                "date",
+                "stock",
+                "fundamentals",
+                "roe",
+                "revenue_growth",
+                "profit_growth",
+                "debt_equity",
+                "margin"
+            ])
+
+        df.columns = [str(c).strip().lower() for c in df.columns]
+
+        return df
+
+    except Exception:
+
+        return pd.DataFrame(columns=[
+            "date",
+            "stock",
+            "fundamentals",
+            "roe",
+            "revenue_growth",
+            "profit_growth",
+            "debt_equity",
+            "margin"
+        ])
+
+
+def save_fundamental_scores(holdings):
+
+    if holdings is None or holdings.empty:
+        return
+
+    if not should_update_scores():
+        return
+
+    try:
+
+        sheet = get_score_sheet()
+
+        history_df = load_score_history()
+
+        now = datetime.now()
+
+        today = str(now.date())
+
+        session = "MORNING" if now.hour < 12 else "EOD"
+
+        existing = history_df[
+            (history_df["date"] == today)
+        ]
+
+        # Prevent duplicate save
+        if not existing.empty:
+
+            existing_session = existing[
+                existing["stock"] == "__SESSION__"
+            ]
+
+            if not existing_session.empty:
+                sessions_done = existing_session["fundamentals"].tolist()
+
+                if session in sessions_done:
+                    return
+
+        # ---- Save scores ----
+        for stock in holdings["stock"].unique():
+
+            result = calculate_fundamental_score(stock)
+
+            sheet.append_row([
+                today,
+                result["stock"],
+                result["fundamentals"],
+                result["roe"],
+                result["revenue_growth"],
+                result["profit_growth"],
+                result["debt_equity"],
+                result["margin"]
+            ])
+
+        # Session marker row
+        sheet.append_row([
+            today,
+            "__SESSION__",
+            session,
+            0,
+            0,
+            0,
+            0,
+            0
+        ])
+
+    except Exception:
+        pass
+
+
+# ================================================================
+# AUTO RUN FUNDAMENTAL ENGINE
+# ================================================================
+
+save_fundamental_scores(holdings)
