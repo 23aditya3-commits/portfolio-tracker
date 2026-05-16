@@ -1,8 +1,10 @@
+Content is user-generated and unverified.
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import gspread
 import yfinance as yf
+import numpy as np
 from pyxirr import xirr
 from datetime import datetime, time
 from oauth2client.service_account import ServiceAccountCredentials
@@ -13,7 +15,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 # ================================================================
 
 def sanitize_numeric(df, cols):
-    """Robustly convert columns to float."""
     def _clean(v):
         s = str(v).strip()
         if s in ("", "None", "nan", "NaN", "NaT"):
@@ -22,7 +23,6 @@ def sanitize_numeric(df, cols):
             return float(s)
         except (ValueError, TypeError):
             return 0.0
-
     for col in cols:
         if col in df.columns:
             df[col] = df[col].map(_clean)
@@ -42,29 +42,21 @@ def get_client():
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     return gspread.authorize(creds)
 
-
 def get_sheet():
     client = get_client()
-    sheet_name = st.secrets["sheets"]["sheet_name"]
-    return client.open(sheet_name).worksheet("transactions")
-
+    return client.open(st.secrets["sheets"]["sheet_name"]).worksheet("transactions")
 
 def get_cashflow_sheet():
     client = get_client()
-    sheet_name = st.secrets["sheets"]["sheet_name"]
-    return client.open(sheet_name).worksheet("load_cashflows")
-
+    return client.open(st.secrets["sheets"]["sheet_name"]).worksheet("load_cashflows")
 
 def get_nav_sheet():
     client = get_client()
-    sheet_name = st.secrets["sheets"]["sheet_name"]
-    return client.open(sheet_name).worksheet("nav_history")
-
+    return client.open(st.secrets["sheets"]["sheet_name"]).worksheet("nav_history")
 
 def get_score_sheet():
     client = get_client()
-    sheet_name = st.secrets["sheets"]["sheet_name"]
-    return client.open(sheet_name).worksheet("score_history")
+    return client.open(st.secrets["sheets"]["sheet_name"]).worksheet("load_score_history")
 
 
 # ================================================================
@@ -73,55 +65,32 @@ def get_score_sheet():
 
 def load_transactions():
     sheet = get_sheet()
-    data = sheet.get_all_records()
-    df = pd.DataFrame(data)
-
+    data  = sheet.get_all_records()
+    df    = pd.DataFrame(data)
     if df.empty:
         return pd.DataFrame(columns=["date", "stock", "qty", "price", "type", "charges"])
-
     df.columns = [str(c).strip().lower() for c in df.columns]
     df = sanitize_numeric(df, ["qty", "price", "charges"])
     df["type"] = df["type"].astype(str).str.strip().str.upper()
     df["row_index"] = range(2, len(df) + 2)
     return df
 
-
 def add_transaction(row):
-    sheet = get_sheet()
-    sheet.append_row([
-        row["date"],
-        row["stock"],
-        float(row["qty"]),
-        float(row["price"]),
-        row["type"],
-        float(row["charges"])
+    get_sheet().append_row([
+        row["date"], row["stock"],
+        float(row["qty"]), float(row["price"]),
+        row["type"], float(row["charges"])
     ])
 
-
 def delete_transaction(row_index):
-    sheet = get_sheet()
-    sheet.delete_rows(row_index)
-
+    get_sheet().delete_rows(row_index)
 
 def update_transaction(row_index, row):
-    sheet = get_sheet()
-    sheet.update(
-        f"A{row_index}:F{row_index}",
-        [[
-            row["date"],
-            row["stock"],
-            float(row["qty"]),
-            float(row["price"]),
-            row["type"],
-            float(row["charges"])
-        ]]
-    )
-
-
-def clear_transactions():
-    sheet = get_sheet()
-    sheet.clear()
-    sheet.append_row(["date", "stock", "qty", "price", "type", "charges"])
+    get_sheet().update(f"A{row_index}:F{row_index}", [[
+        row["date"], row["stock"],
+        float(row["qty"]), float(row["price"]),
+        row["type"], float(row["charges"])
+    ]])
 
 
 # ================================================================
@@ -129,62 +98,69 @@ def clear_transactions():
 # ================================================================
 
 def load_cashflows():
-    sheet = get_cashflow_sheet()
-    data = sheet.get_all_records()
-    df = pd.DataFrame(data)
-
+    data = get_cashflow_sheet().get_all_records()
+    df   = pd.DataFrame(data)
     if df.empty:
         return pd.DataFrame(columns=["date", "type", "amount", "note"])
-
     df.columns = [str(c).strip().lower() for c in df.columns]
     df = sanitize_numeric(df, ["amount"])
     df["type"] = df["type"].astype(str).str.strip().str.upper()
     return df
 
-
 def add_cashflow_entry(row):
-    sheet = get_cashflow_sheet()
-    sheet.append_row([
-        row["date"],
-        row["type"],
-        float(row["amount"]),
-        row["note"]
+    get_cashflow_sheet().append_row([
+        row["date"], row["type"], float(row["amount"]), row["note"]
     ])
 
 
-def clear_cashflow():
-    sheet = get_cashflow_sheet()
-    sheet.clear()
-    sheet.append_row(["date", "type", "amount", "note"])
-
-
 # ================================================================
-# SECTION 5: PRICE FETCH
+# SECTION 5: PRICE FETCH (SESSION-CACHED)
 # ================================================================
 
 def get_price(stock):
-    """Always returns a plain Python float."""
     try:
         val = yf.Ticker(str(stock).strip() + ".NS").history(period="1d")["Close"].iloc[-1]
         return float(pd.to_numeric(val, errors="coerce") or 0.0)
     except Exception:
         return 0.0
 
+def fetch_all_prices(stocks):
+    if not stocks:
+        return {}
+    try:
+        symbols = [s.strip() + ".NS" for s in stocks]
+        raw = yf.download(symbols, period="1d", auto_adjust=True, progress=False)["Close"]
+        prices = {}
+        if len(symbols) == 1:
+            prices[stocks[0]] = float(pd.to_numeric(raw.iloc[-1], errors="coerce") or 0.0)
+        else:
+            for sym, stock in zip(symbols, stocks):
+                try:
+                    prices[stock] = float(pd.to_numeric(raw[sym].iloc[-1], errors="coerce") or 0.0)
+                except Exception:
+                    prices[stock] = 0.0
+        return prices
+    except Exception:
+        return {s: get_price(s) for s in stocks}
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_cached_prices(stocks_tuple):
+    return fetch_all_prices(list(stocks_tuple))
+
 
 # ================================================================
 # SECTION 6: PORTFOLIO CALCULATIONS
 # ================================================================
 
-def compute_portfolio(df):
+def compute_portfolio(df, prices=None):
     if df.empty:
         return 0.0, 0.0, 0.0, pd.DataFrame()
-
     df = df.copy()
     df = sanitize_numeric(df, ["qty", "price", "charges"])
-    df["type"] = df["type"].astype(str).str.strip().str.upper()
+    df["type"]   = df["type"].astype(str).str.strip().str.upper()
     df["amount"] = df["qty"] * df["price"]
 
-    multiplier = df["type"].map(lambda t: 1.0 if t == "BUY" else -1.0)
+    multiplier     = df["type"].map(lambda t: 1.0 if t == "BUY" else -1.0)
     df["signed_qty"] = df["qty"] * multiplier
 
     holdings = df.groupby("stock").agg({"signed_qty": "sum"}).reset_index()
@@ -196,10 +172,9 @@ def compute_portfolio(df):
         buy_cost      = float(df.loc[df["type"] == "BUY",  "amount"].sum())
         sell_proceeds = float(df.loc[df["type"] == "SELL", "amount"].sum())
         total_charges = float(df["charges"].sum())
-        realised_pnl  = sell_proceeds - buy_cost - total_charges
-        return 0.0, 0.0, realised_pnl, pd.DataFrame()
+        return 0.0, 0.0, sell_proceeds - buy_cost - total_charges, pd.DataFrame()
 
-    buys = df[df["type"] == "BUY"].copy()
+    buys     = df[df["type"] == "BUY"].copy()
     avg_cost = (
         buys.groupby("stock")
         .apply(lambda x: (x["qty"] * x["price"]).sum() / x["qty"].sum())
@@ -211,71 +186,62 @@ def compute_portfolio(df):
     holdings["avg_price"] = pd.to_numeric(holdings["avg_price"], errors="coerce").fillna(0.0)
     holdings["invested"]  = holdings["qty"] * holdings["avg_price"]
 
-    holdings["cmp"] = holdings["stock"].apply(get_price)
-    holdings["cmp"] = pd.to_numeric(holdings["cmp"], errors="coerce").fillna(0.0).astype("float64")
+    if prices:
+        holdings["cmp"] = holdings["stock"].map(lambda s: float(prices.get(s, 0.0)))
+    else:
+        holdings["cmp"] = holdings["stock"].apply(get_price)
+    holdings["cmp"]   = pd.to_numeric(holdings["cmp"], errors="coerce").fillna(0.0).astype("float64")
     holdings["value"] = holdings["qty"] * holdings["cmp"]
 
-    invested    = float(holdings["invested"].sum())
-    total_value = float(holdings["value"].sum())
+    invested       = float(holdings["invested"].sum())
+    total_value    = float(holdings["value"].sum())
     unrealised_pnl = total_value - invested
 
-    sell_df = df[df["type"] == "SELL"].copy()
+    sell_df       = df[df["type"] == "SELL"].copy()
     sell_proceeds = float(sell_df["amount"].sum())
-
-    sold_cost = 0.0
+    sold_cost     = 0.0
     for stock, grp in sell_df.groupby("stock"):
         avg_row = avg_cost[avg_cost["stock"] == stock]
         if not avg_row.empty:
-            avg_p = float(avg_row["avg_price"].iloc[0])
-            sold_cost += float(grp["qty"].sum()) * avg_p
+            sold_cost += float(grp["qty"].sum()) * float(avg_row["avg_price"].iloc[0])
 
     realised_pnl  = sell_proceeds - sold_cost
     total_charges = float(df["charges"].sum())
     pnl = unrealised_pnl + realised_pnl - total_charges
-
     holdings["pnl"] = (holdings["value"] - holdings["invested"]).round(2)
-
     return invested, total_value, pnl, holdings
 
 
-def compute_xirr(df):
+def compute_xirr(df, prices=None):
     if df.empty:
         return 0.0
-
     df = df.copy()
     df = sanitize_numeric(df, ["qty", "price", "charges"])
     df["type"] = df["type"].astype(str).str.strip().str.upper()
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df = df.dropna(subset=["date"])
-
     if df.empty:
         return 0.0
 
     cashflows = []
     for _, row in df.iterrows():
         amount = float(row["qty"]) * float(row["price"])
-        if row["type"] == "BUY":
-            cf = -(amount + float(row["charges"]))
-        else:
-            cf = amount - float(row["charges"])
+        cf = -(amount + float(row["charges"])) if row["type"] == "BUY" else (amount - float(row["charges"]))
         cashflows.append((row["date"].to_pydatetime(), cf))
 
     multiplier = df["type"].map(lambda t: 1.0 if t == "BUY" else -1.0)
     df["signed_qty"] = df["qty"] * multiplier
-    open_holdings = df.groupby("stock")["signed_qty"].sum()
-    open_holdings = open_holdings[open_holdings > 0]
+    open_holdings    = df.groupby("stock")["signed_qty"].sum()
+    open_holdings    = open_holdings[open_holdings > 0]
 
     terminal_value = sum(
-        float(qty) * get_price(str(stock))
+        float(qty) * (float(prices.get(str(stock), 0.0)) if prices else get_price(str(stock)))
         for stock, qty in open_holdings.items()
     )
-
     if terminal_value > 0:
         cashflows.append((datetime.today(), float(terminal_value)))
-
     if len(cashflows) < 2:
         return 0.0
-
     try:
         result = xirr(cashflows)
         return float(result) if result is not None else 0.0
@@ -289,12 +255,8 @@ def search_stocks(query):
     try:
         results = yf.Search(query).quotes
         return [
-            {
-                "label": item.get("symbol", ""),
-                "symbol": item.get("symbol", "").replace(".NS", "")
-            }
-            for item in results
-            if item.get("symbol", "").endswith(".NS")
+            {"label": item.get("symbol", ""), "symbol": item.get("symbol", "").replace(".NS", "")}
+            for item in results if item.get("symbol", "").endswith(".NS")
         ]
     except Exception:
         return []
@@ -308,44 +270,32 @@ def calculate_free_cash(df):
     cash_df = load_cashflows()
     if cash_df.empty:
         return 0.0
-
     total_cash = float(cash_df["amount"].sum())
-
     if df.empty:
         return round(total_cash, 2)
-
     df = df.copy()
     df = sanitize_numeric(df, ["qty", "price", "charges"])
-    df["type"] = df["type"].astype(str).str.strip().str.upper()
+    df["type"]   = df["type"].astype(str).str.strip().str.upper()
     df["amount"] = df["qty"] * df["price"]
-
     buy_spent     = float(df.loc[df["type"] == "BUY",  "amount"].sum())
     sell_received = float(df.loc[df["type"] == "SELL", "amount"].sum())
     charges_total = float(df["charges"].sum())
-
-    available = total_cash - buy_spent - charges_total + sell_received
-    return round(max(available, 0.0), 2)
-
+    return round(max(total_cash - buy_spent - charges_total + sell_received, 0.0), 2)
 
 def check_free_cash_before_buy(df, new_date, qty, price):
     cash_df = load_cashflows()
     if cash_df.empty:
         return False
-
     total_cash = float(cash_df["amount"].sum())
-
     df = df.copy()
     df = sanitize_numeric(df, ["qty", "price", "charges"])
     df["type"] = df["type"].astype(str).str.strip().str.upper()
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
-
     past = df[df["date"] <= pd.to_datetime(new_date)].copy()
     past["amount"] = past["qty"] * past["price"]
-
     buy_spent     = float(past.loc[past["type"] == "BUY",  "amount"].sum())
     sell_received = float(past.loc[past["type"] == "SELL", "amount"].sum())
     charges_total = float(past["charges"].sum())
-
     available = total_cash - buy_spent - charges_total + sell_received
     return available >= float(qty) * float(price)
 
@@ -357,42 +307,33 @@ def check_free_cash_before_buy(df, new_date, qty, price):
 def calculate_total_units(cash_df):
     if cash_df.empty:
         return 0.0
-    credit = float(cash_df.loc[cash_df["type"] == "CREDIT", "amount"].sum())
-    debit  = float(cash_df.loc[cash_df["type"] == "DEBIT",  "amount"].sum())
+    credit   = float(cash_df.loc[cash_df["type"] == "CREDIT", "amount"].sum())
+    debit    = float(cash_df.loc[cash_df["type"] == "DEBIT",  "amount"].sum())
     net_cash = credit - debit
-    if net_cash <= 0:
-        return 0.0
-    return round(net_cash / 10, 4)
-
+    return round(net_cash / 10, 4) if net_cash > 0 else 0.0
 
 def calculate_nav(total_value, free_cash, units):
     total_assets = float(total_value) + float(free_cash)
-    if units <= 0:
-        return 10.0
-    return round(total_assets / units, 2)
-
+    return round(total_assets / units, 2) if units > 0 else 10.0
 
 def save_nav_history(nav, total_assets, units):
     try:
-        sheet = get_nav_sheet()
-        today = str(datetime.today().date())
-        data  = sheet.get_all_records()
-        existing_dates = [str(x.get("date")) for x in data]
-        row_data = [today, float(nav), float(total_assets), float(units)]
-        if today in existing_dates:
-            row_num = existing_dates.index(today) + 2
-            sheet.update(f"A{row_num}:D{row_num}", [row_data])
+        sheet  = get_nav_sheet()
+        today  = str(datetime.today().date())
+        data   = sheet.get_all_records()
+        dates  = [str(x.get("date")) for x in data]
+        row    = [today, float(nav), float(total_assets), float(units)]
+        if today in dates:
+            sheet.update(f"A{dates.index(today)+2}:D{dates.index(today)+2}", [row])
         else:
-            sheet.append_row(row_data)
+            sheet.append_row(row)
     except Exception:
         pass
 
-
 def load_nav_history():
     try:
-        sheet = get_nav_sheet()
-        data  = sheet.get_all_records()
-        df    = pd.DataFrame(data)
+        data = get_nav_sheet().get_all_records()
+        df   = pd.DataFrame(data)
         if df.empty:
             return pd.DataFrame(columns=["date", "nav", "portfolio_value", "units"])
         df.columns = [str(c).strip().lower() for c in df.columns]
@@ -404,117 +345,314 @@ def load_nav_history():
 
 
 # ================================================================
-# SECTION 9: FUNDAMENTALS SCORING ENGINE
+# SECTION 9: SCORING ENGINE — 100 POINT SYSTEM
+# ================================================================
+#
+#  Fundamentals  40 pts  — ROE, Revenue Growth, Profit Growth, D/E, Margin
+#  Valuation     25 pts  — PE, PB, PEG, EV/EBITDA
+#  Technical     20 pts  — SMA50, SMA200, RSI, Momentum
+#  Macro         15 pts  — Sector + Beta heuristic
+#
 # ================================================================
 
-def should_update_scores():
-    now = datetime.now()
-    current_time = now.time()
-    morning_start = time(10, 0)
-    morning_end   = time(10, 15)
-    eod_start     = time(15, 0)
-    eod_end       = time(15, 15)
-    return (
-        morning_start <= current_time <= morning_end
-        or
-        eod_start <= current_time <= eod_end
-    )
+# ---- FUNDAMENTALS (40) ----
+def _score_fundamentals(info):
+    """
+    Returns (score, detail_dict)
+    Max 40 pts.
+    """
+    roe    = float(info.get("returnOnEquity")   or 0) * 100   # %
+    rev_g  = float(info.get("revenueGrowth")    or 0) * 100   # %
+    prof_g = float(info.get("earningsGrowth")   or 0) * 100   # %
+    de     = float(info.get("debtToEquity")     or 0)
+    margin = float(info.get("operatingMargins") or 0) * 100   # %
+    roce   = float(info.get("returnOnAssets")   or 0) * 100   # proxy
+
+    score = 0
+    # ROE (0–10)
+    if   roe > 25: score += 10
+    elif roe > 15: score += 7
+    elif roe > 8:  score += 4
+
+    # Revenue growth (0–8)
+    if   rev_g > 20: score += 8
+    elif rev_g > 10: score += 5
+    elif rev_g > 5:  score += 2
+
+    # Profit growth (0–8)
+    if   prof_g > 20: score += 8
+    elif prof_g > 10: score += 5
+    elif prof_g > 5:  score += 2
+
+    # Debt/Equity (0–8)
+    if   de < 0.3: score += 8
+    elif de < 1.0: score += 5
+    elif de < 2.0: score += 2
+
+    # Operating margin (0–6)
+    if   margin > 25: score += 6
+    elif margin > 15: score += 4
+    elif margin > 8:  score += 2
+
+    score = min(score, 40)
+
+    return score, {
+        "roe_%":        round(roe,    2),
+        "rev_growth_%": round(rev_g,  2),
+        "prof_growth_%":round(prof_g, 2),
+        "debt_equity":  round(de,     2),
+        "op_margin_%":  round(margin, 2),
+        "roa_%":        round(roce,   2),
+    }
 
 
-def calculate_fundamental_score(stock):
+# ---- VALUATION (25) ----
+def _score_valuation(info):
+    """Max 25 pts."""
+    pe  = float(info.get("trailingPE")         or 0)
+    pb  = float(info.get("priceToBook")        or 0)
+    peg = float(info.get("pegRatio")           or 0)
+    ev  = float(info.get("enterpriseToEbitda") or 0)
+
+    score = 0
+    # PE (0–10)
+    if   0 < pe < 15:  score += 10
+    elif 0 < pe < 25:  score += 6
+    elif 0 < pe < 35:  score += 3
+
+    # PB (0–5)
+    if   0 < pb < 1.5: score += 5
+    elif 0 < pb < 3:   score += 3
+    elif 0 < pb < 5:   score += 1
+
+    # PEG (0–5)
+    if   0 < peg < 1:   score += 5
+    elif 0 < peg < 1.5: score += 3
+    elif 0 < peg < 2:   score += 1
+
+    # EV/EBITDA (0–5)
+    if   0 < ev < 8:   score += 5
+    elif 0 < ev < 15:  score += 3
+    elif 0 < ev < 20:  score += 1
+
+    score = min(score, 25)
+
+    return score, {
+        "pe":       round(pe,  2),
+        "pb":       round(pb,  2),
+        "peg":      round(peg, 2),
+        "ev_ebitda":round(ev,  2),
+    }
+
+
+# ---- TECHNICAL (20) ----
+def _calc_rsi(series, period=14):
+    delta = series.diff()
+    gain  = delta.where(delta > 0, 0.0).rolling(period).mean()
+    loss  = (-delta.where(delta < 0, 0.0)).rolling(period).mean()
+    rs    = gain / loss.replace(0, np.nan)
+    rsi   = 100 - (100 / (1 + rs))
+    val   = rsi.iloc[-1]
+    return float(val) if not np.isnan(val) else 50.0
+
+
+def _score_technical(ticker):
+    """Max 20 pts."""
     try:
-        ticker = yf.Ticker(str(stock).strip() + ".NS")
-        info = ticker.info
+        hist = ticker.history(period="1y")
+        if hist.empty or len(hist) < 50:
+            return 0, {"sma50": 0, "sma200": 0, "rsi": 50, "momentum_1m_%": 0}
 
-        roe            = float(info.get("returnOnEquity")  or 0) * 100
-        revenue_growth = float(info.get("revenueGrowth")   or 0) * 100
-        profit_growth  = float(info.get("earningsGrowth")  or 0) * 100
-        debt_equity    = float(info.get("debtToEquity")    or 0)
-        margin         = float(info.get("operatingMargins") or 0) * 100
+        close  = hist["Close"]
+        price  = float(close.iloc[-1])
+        sma50  = float(close.rolling(50).mean().iloc[-1])
+        sma200 = float(close.rolling(200).mean().iloc[-1]) if len(close) >= 200 else sma50
+        rsi    = _calc_rsi(close)
+
+        # 1-month momentum
+        price_1m   = float(close.iloc[-21]) if len(close) >= 21 else price
+        momentum   = ((price - price_1m) / price_1m * 100) if price_1m > 0 else 0.0
 
         score = 0
-        if roe            > 15: score += 8
-        if revenue_growth > 10: score += 10
-        if profit_growth  > 10: score += 10
-        if debt_equity    < 1:  score += 6
-        if margin         > 15: score += 6
+        # Price vs SMA50 (0–5)
+        if price > sma50 * 1.02:  score += 5
+        elif price > sma50:        score += 3
 
-        return {
-            "stock":          stock,
-            "fundamentals":   score,
-            "roe":            round(roe, 2),
-            "revenue_growth": round(revenue_growth, 2),
-            "profit_growth":  round(profit_growth, 2),
-            "debt_equity":    round(debt_equity, 2),
-            "margin":         round(margin, 2),
+        # Price vs SMA200 (0–5)
+        if price > sma200 * 1.02: score += 5
+        elif price > sma200:       score += 3
+
+        # RSI (0–5) — reward 40–65 zone (not overbought, not oversold)
+        if   40 <= rsi <= 65: score += 5
+        elif 30 <= rsi < 40:  score += 3
+        elif 65 < rsi <= 75:  score += 2
+
+        # Momentum (0–5)
+        if   momentum > 5:  score += 5
+        elif momentum > 2:  score += 3
+        elif momentum > 0:  score += 1
+
+        score = min(score, 20)
+
+        return score, {
+            "sma50":         round(sma50,    2),
+            "sma200":        round(sma200,   2),
+            "rsi":           round(rsi,      2),
+            "momentum_1m_%": round(momentum, 2),
         }
     except Exception:
-        return {
-            "stock":          stock,
-            "fundamentals":   0,
-            "roe":            0,
-            "revenue_growth": 0,
-            "profit_growth":  0,
-            "debt_equity":    0,
-            "margin":         0,
-        }
+        return 0, {"sma50": 0, "sma200": 0, "rsi": 50, "momentum_1m_%": 0}
 
 
+# ---- MACRO (15) ----
+# Sector map: premium sectors score higher, cyclicals/PSUs lower
+_SECTOR_SCORES = {
+    # BFSI
+    "HDFCBANK": 13, "ICICIBANK": 13, "KOTAKBANK": 12, "AXISBANK": 11,
+    "SBICARD": 10,  "BAJFINANCE": 12,
+    # IT
+    "INFY": 12, "TCS": 12, "WIPRO": 10, "HCLTECH": 11, "TECHM": 10,
+    # Consumer
+    "NESTLEIND": 12, "HINDUNILVR": 12, "ASIANPAINT": 11, "TITAN": 11,
+    # Pharma
+    "SUNPHARMA": 11, "DRREDDY": 11, "CIPLA": 10,
+    # Auto
+    "MARUTI": 10, "TATAMOTORS": 9, "BAJAJ-AUTO": 10, "HEROMOTOCO": 10,
+    # Energy / PSU
+    "RELIANCE": 11, "ONGC": 8, "NTPC": 8, "POWERGRID": 8,
+    # Metals
+    "TATASTEEL": 8, "HINDALCO": 8, "JSWSTEEL": 8,
+}
+
+def _score_macro(stock, info):
+    """Max 15 pts — sector + beta."""
+    # Sector lookup
+    s = stock.upper()
+    base = 8   # default for unknown stocks
+    for key, val in _SECTOR_SCORES.items():
+        if key in s:
+            base = val
+            break
+
+    # Beta bonus/penalty (0–2 pts)
+    beta  = float(info.get("beta") or 1.0)
+    bonus = 0
+    if 0.5 <= beta <= 1.2:  bonus = 2   # low-to-moderate volatility preferred
+    elif beta < 0.5:         bonus = 1
+
+    return min(base + bonus, 15)
+
+
+# ---- MAIN SCORING RUNNER ----
+def run_full_scoring(holdings):
+    """Score all stocks in holdings. Returns a sorted DataFrame."""
+    if holdings is None or holdings.empty:
+        return pd.DataFrame()
+
+    stocks   = holdings["stock"].unique().tolist()
+    results  = []
+    progress = st.progress(0, text="Starting...")
+
+    for i, stock in enumerate(stocks):
+        progress.progress((i + 1) / len(stocks), text=f"Scoring {stock} ({i+1}/{len(stocks)})…")
+        try:
+            ticker = yf.Ticker(stock + ".NS")
+            info   = ticker.info
+
+            f_score, f_detail = _score_fundamentals(info)
+            v_score, v_detail = _score_valuation(info)
+            t_score, t_detail = _score_technical(ticker)
+            m_score           = _score_macro(stock, info)
+            total             = f_score + v_score + t_score + m_score
+
+            row = {
+                "stock":        stock,
+                "total":        total,
+                "fundamentals": f_score,
+                "valuation":    v_score,
+                "technical":    t_score,
+                "macro":        m_score,
+            }
+            row.update(f_detail)
+            row.update(v_detail)
+            row.update(t_detail)
+            results.append(row)
+
+        except Exception:
+            results.append({
+                "stock": stock, "total": 0,
+                "fundamentals": 0, "valuation": 0,
+                "technical": 0, "macro": 0,
+            })
+
+    progress.empty()
+
+    df = pd.DataFrame(results).sort_values("total", ascending=False).reset_index(drop=True)
+    return df
+
+
+# ---- SCORE SHEET CRUD ----
 def load_score_history():
     try:
-        sheet = get_score_sheet()
-        data  = sheet.get_all_records()
-        df    = pd.DataFrame(data)
+        data = get_score_sheet().get_all_records()
+        df   = pd.DataFrame(data)
         if df.empty:
             return pd.DataFrame(columns=[
-                "date", "stock", "fundamentals", "roe",
-                "revenue_growth", "profit_growth", "debt_equity", "margin"
+                "date", "stock", "fundamentals", "valuation",
+                "technical", "macro", "total"
             ])
         df.columns = [str(c).strip().lower() for c in df.columns]
+        df = sanitize_numeric(df, ["fundamentals", "valuation", "technical", "macro", "total"])
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
         return df
     except Exception:
         return pd.DataFrame(columns=[
-            "date", "stock", "fundamentals", "roe",
-            "revenue_growth", "profit_growth", "debt_equity", "margin"
+            "date", "stock", "fundamentals", "valuation",
+            "technical", "macro", "total"
         ])
 
 
-def save_fundamental_scores(holdings):
-    if holdings is None or holdings.empty:
-        return
-    if not should_update_scores():
+def is_eod_window():
+    """Only save at EOD: 3:00 PM – 3:30 PM IST."""
+    now = datetime.now().time()
+    return time(15, 0) <= now <= time(15, 30)
+
+
+def save_scores_to_sheet(score_df):
+    """
+    Save today's scores to Google Sheet.
+    One row per stock. Overwrites today's rows if they exist.
+    Columns: date, stock, fundamentals, valuation, technical, macro, total
+    """
+    if score_df is None or score_df.empty:
         return
     try:
-        sheet      = get_score_sheet()
-        history_df = load_score_history()
-        now        = datetime.now()
-        today      = str(now.date())
-        session    = "MORNING" if now.hour < 12 else "EOD"
+        sheet   = get_score_sheet()
+        today   = str(datetime.today().date())
+        data    = sheet.get_all_records()
+        all_df  = pd.DataFrame(data)
 
-        existing = history_df[history_df["date"] == today]
-        if not existing.empty:
-            existing_session = existing[existing["stock"] == "__SESSION__"]
-            if not existing_session.empty:
-                sessions_done = existing_session["fundamentals"].tolist()
-                if session in sessions_done:
-                    return
+        if not all_df.empty:
+            all_df.columns = [str(c).strip().lower() for c in all_df.columns]
+            # Delete today's rows (iterate in reverse to not mess up row numbers)
+            today_rows = [
+                i + 2 for i, row in enumerate(data)
+                if str(row.get("date", "")).strip() == today
+            ]
+            for r in sorted(today_rows, reverse=True):
+                sheet.delete_rows(r)
 
-        for stock in holdings["stock"].unique():
-            result = calculate_fundamental_score(stock)
+        # Append fresh rows
+        for _, row in score_df.iterrows():
             sheet.append_row([
                 today,
-                result["stock"],
-                result["fundamentals"],
-                result["roe"],
-                result["revenue_growth"],
-                result["profit_growth"],
-                result["debt_equity"],
-                result["margin"]
+                str(row.get("stock", "")),
+                int(row.get("fundamentals", 0)),
+                int(row.get("valuation",    0)),
+                int(row.get("technical",    0)),
+                int(row.get("macro",        0)),
+                int(row.get("total",        0)),
             ])
-
-        # Session marker to prevent duplicate saves
-        sheet.append_row([today, "__SESSION__", session, 0, 0, 0, 0, 0])
-
     except Exception:
         pass
 
@@ -528,10 +666,8 @@ st.title("📊 My Mutual Fund Tracker")
 
 # ---- LOAD DATA ----
 df = load_transactions()
-
 if df is None:
     df = pd.DataFrame()
-
 if df.empty:
     st.warning("No transactions found. Showing empty dashboard.")
     df = pd.DataFrame(columns=["date", "stock", "qty", "price", "type", "charges", "row_index"])
@@ -542,9 +678,28 @@ if "type" in df.columns:
 if "date" in df.columns:
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
+# ---- PRICE FETCH (cached) ----
+open_stocks = tuple(sorted(
+    df.groupby("stock").apply(
+        lambda x: (x["qty"] * x["type"].map(lambda t: 1.0 if t == "BUY" else -1.0)).sum()
+    ).pipe(lambda s: s[s > 0].index.tolist())
+)) if not df.empty else ()
+
+col_r1, col_r2 = st.columns([6, 1])
+with col_r2:
+    if st.button("🔄 Refresh Prices"):
+        st.cache_data.clear()
+        st.rerun()
+with col_r1:
+    if open_stocks:
+        st.caption(f"📡 Prices cached 5 min · {', '.join(open_stocks)}")
+
+with st.spinner("Fetching market prices..."):
+    prices = get_cached_prices(open_stocks) if open_stocks else {}
+
 # ---- CALCULATIONS ----
-invested, value, pnl, holdings = compute_portfolio(df)
-xirr_val     = compute_xirr(df)
+invested, value, pnl, holdings = compute_portfolio(df, prices=prices)
+xirr_val     = compute_xirr(df, prices=prices)
 free_cash    = calculate_free_cash(df)
 cash_df      = load_cashflows()
 units        = calculate_total_units(cash_df)
@@ -552,9 +707,6 @@ total_assets = value + free_cash
 nav          = calculate_nav(value, free_cash, units)
 save_nav_history(nav, total_assets, units)
 nav_df       = load_nav_history()
-
-# Auto-run scoring engine
-save_fundamental_scores(holdings)
 
 # ---- TABS ----
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -588,19 +740,13 @@ with tab1:
     )
 
     st.divider()
-
-    # ---- NAV CHART ----
     st.subheader("📈 NAV History")
 
     if nav_df is not None and not nav_df.empty:
-
         range_option = st.radio(
-            "Select Time Range",
-            ["1M", "3M", "6M", "1Y", "5Y", "YTD"],
-            horizontal=True
+            "Select Time Range", ["1M", "3M", "6M", "1Y", "5Y", "YTD"], horizontal=True
         )
-
-        today_ts = pd.Timestamp.today()
+        today_ts   = pd.Timestamp.today()
         cutoff_map = {
             "1M":  today_ts - pd.DateOffset(months=1),
             "3M":  today_ts - pd.DateOffset(months=3),
@@ -609,41 +755,25 @@ with tab1:
             "5Y":  today_ts - pd.DateOffset(years=5),
             "YTD": pd.Timestamp(year=today_ts.year, month=1, day=1),
         }
-
         nav_filtered = nav_df[nav_df["date"] >= cutoff_map[range_option]].copy()
         nav_filtered = nav_filtered.sort_values("date")
         nav_filtered["date_str"] = nav_filtered["date"].dt.strftime("%d %b '%y")
 
-        nav_chart = px.line(
-            nav_filtered,
-            x="date_str",
-            y="nav",
-            markers=True,
-            title=f"NAV Growth ({range_option})"
-        )
+        nav_chart = px.line(nav_filtered, x="date_str", y="nav", markers=True,
+                            title=f"NAV Growth ({range_option})")
         nav_chart.update_layout(
-            xaxis_title="",
-            yaxis_title="NAV (₹)",
-            hovermode="x unified",
+            xaxis_title="", yaxis_title="NAV (₹)", hovermode="x unified",
             xaxis=dict(tickangle=-45, showgrid=False),
-            yaxis=dict(showgrid=True),
-            plot_bgcolor="rgba(0,0,0,0)",
+            yaxis=dict(showgrid=True), plot_bgcolor="rgba(0,0,0,0)",
         )
-        nav_chart.update_traces(
-            line=dict(width=2),
-            marker=dict(size=6),
-            hovertemplate="₹%{y:.2f}<extra></extra>"
-        )
+        nav_chart.update_traces(line=dict(width=2), marker=dict(size=6),
+                                hovertemplate="₹%{y:.2f}<extra></extra>")
         st.plotly_chart(nav_chart, use_container_width=True)
-
     else:
-        st.info("NAV history will appear here after the first day of data.")
+        st.info("NAV history will appear after the first day of data.")
 
     st.divider()
-
-    # ---- ALLOCATION PIE ----
     st.subheader("📊 Allocation")
-
     if holdings is not None and not holdings.empty:
         fig = px.pie(holdings, values="value", names="stock")
         st.plotly_chart(fig, use_container_width=True)
@@ -659,7 +789,6 @@ with tab2:
 
     search_query  = st.text_input("Search Stock (e.g. hdfc, reliance)")
     stock_options = search_stocks(search_query) if search_query else []
-
     if not stock_options:
         stock_options = [{"label": "No results", "symbol": ""}]
 
@@ -675,44 +804,28 @@ with tab2:
         submit  = st.form_submit_button("Add")
 
         if submit:
-            qty   = float(qty)
-            price = float(price)
-
-            if type_ == "BUY":
-                can_buy = check_free_cash_before_buy(df, date, qty, price)
-                if not can_buy:
-                    st.error("❌ Insufficient Free Cash for this transaction!")
-                    st.stop()
-
+            qty, price = float(qty), float(price)
+            if type_ == "BUY" and not check_free_cash_before_buy(df, date, qty, price):
+                st.error("❌ Insufficient Free Cash!")
+                st.stop()
             add_transaction({
-                "date":    str(date),
-                "stock":   stock,
-                "qty":     qty,
-                "price":   price,
-                "type":    type_,
-                "charges": float(charges)
+                "date": str(date), "stock": stock, "qty": qty,
+                "price": price, "type": type_, "charges": float(charges)
             })
             st.success("Transaction Added!")
             st.rerun()
 
     st.divider()
-
     cutoff      = pd.Timestamp.today() - pd.DateOffset(months=3)
     df_filtered = df[df["date"] >= cutoff] if "date" in df.columns else df
-
     with st.expander("📊 Existing Transactions (Last 3 Months)", expanded=False):
         st.dataframe(df_filtered, use_container_width=True)
 
     st.divider()
-
     with st.expander("🛠️ Edit / Delete Transactions", expanded=False):
         st.subheader("🗑️ Delete Transaction")
-
-        del_row = st.selectbox(
-            "Select row to delete",
-            df["row_index"],
-            format_func=lambda x: f"Row {x}"
-        )
+        del_row = st.selectbox("Select row to delete", df["row_index"],
+                               format_func=lambda x: f"Row {x}")
         if st.button("Delete Transaction"):
             delete_transaction(del_row)
             st.success("Deleted!")
@@ -720,13 +833,10 @@ with tab2:
 
         st.divider()
         st.subheader("✏️ Edit Transaction")
-
         edit_row = st.selectbox("Select row to edit", df["row_index"], key="edit_row")
         filtered = df[df["row_index"] == edit_row]
-
         if not filtered.empty:
             edit_data = filtered.iloc[0]
-
             with st.form("edit_form"):
                 date       = st.date_input("Date",    value=pd.to_datetime(edit_data["date"]))
                 stock_edit = st.text_input("Stock",   value=edit_data["stock"])
@@ -735,15 +845,10 @@ with tab2:
                 type_      = st.selectbox("Type", ["BUY", "SELL"])
                 charges    = st.number_input("Charges", value=float(edit_data["charges"]))
                 update_btn = st.form_submit_button("Update")
-
                 if update_btn:
                     update_transaction(edit_row, {
-                        "date":    str(date),
-                        "stock":   stock_edit,
-                        "qty":     float(qty),
-                        "price":   float(price),
-                        "type":    type_,
-                        "charges": float(charges)
+                        "date": str(date), "stock": stock_edit, "qty": float(qty),
+                        "price": float(price), "type": type_, "charges": float(charges)
                     })
                     st.success("Updated!")
                     st.rerun()
@@ -754,7 +859,6 @@ with tab2:
 # ================================================================
 with tab3:
     st.subheader("📌 Holdings Breakdown")
-
     if holdings is not None and not holdings.empty:
         st.dataframe(holdings, use_container_width=True)
     else:
@@ -762,23 +866,129 @@ with tab3:
 
 
 # ================================================================
-# TAB 4: SCORING
+# TAB 4: SCORING DASHBOARD — 100 POINT SYSTEM
 # ================================================================
 with tab4:
-    st.subheader("🧠 Fundamentals Scoring Engine")
+    st.subheader("🧠 Stock Scoring Dashboard")
 
-    score_df = load_score_history()
+    st.markdown("""
+    | Category | Max | What's measured |
+    |---|---|---|
+    | **Fundamentals** | 40 | ROE, Revenue Growth, Profit Growth, D/E Ratio, Operating Margin |
+    | **Valuation** | 25 | PE, PB, PEG, EV/EBITDA |
+    | **Technical** | 20 | SMA50, SMA200, RSI, 1-Month Momentum |
+    | **Macro** | 15 | Sector quality + Beta |
+    | **Total** | **100** | |
+    """)
 
-    if score_df is not None and not score_df.empty:
-        score_df = score_df[score_df["stock"] != "__SESSION__"]
-        latest_scores = (
-            score_df.sort_values("date")
+    st.divider()
+
+    # ---- EOD AUTO-SAVE STATUS ----
+    now = datetime.now()
+    if is_eod_window():
+        st.success("🟢 EOD window active (3:00–3:30 PM) — scores will auto-save after running.")
+    else:
+        next_eod = "3:00 PM today" if now.hour < 15 else "3:00 PM tomorrow"
+        st.info(f"🕒 Auto-save runs at EOD (3:00–3:30 PM IST). Next: {next_eod}")
+
+    st.divider()
+
+    # ---- MANUAL RUN ----
+    if holdings is not None and not holdings.empty:
+
+        col_btn1, col_btn2 = st.columns([2, 5])
+        with col_btn1:
+            run_btn = st.button("🚀 Run Scoring Now", use_container_width=True)
+
+        if run_btn:
+            with st.spinner("Fetching data and scoring... (~30–60 sec)"):
+                score_df = run_full_scoring(holdings)
+
+            if score_df is not None and not score_df.empty:
+                st.session_state["score_df"] = score_df
+                st.session_state["score_date"] = str(datetime.now().strftime("%d %b %Y %I:%M %p"))
+
+                # Auto-save if in EOD window
+                if is_eod_window():
+                    save_scores_to_sheet(score_df)
+                    st.success("✅ Scores saved to Google Sheet (EOD).")
+            else:
+                st.warning("No data returned. Check yfinance connectivity.")
+
+        # ---- DISPLAY RESULTS ----
+        if "score_df" in st.session_state:
+            score_df  = st.session_state["score_df"]
+            score_date = st.session_state.get("score_date", "")
+
+            st.caption(f"Last scored: {score_date}")
+
+            # Summary table — key columns first
+            summary_cols = ["stock", "total", "fundamentals", "valuation", "technical", "macro"]
+            st.subheader("🏆 Rankings")
+            st.dataframe(
+                score_df[summary_cols].style.background_gradient(
+                    subset=["total"], cmap="RdYlGn"
+                ),
+                use_container_width=True
+            )
+
+            # Stacked bar
+            st.subheader("📊 Score Breakdown")
+            bar_df = score_df[["stock", "fundamentals", "valuation", "technical", "macro"]].melt(
+                id_vars="stock", var_name="category", value_name="score"
+            )
+            fig_bar = px.bar(
+                bar_df, x="stock", y="score", color="category", barmode="stack",
+                color_discrete_map={
+                    "fundamentals": "#2196F3",
+                    "valuation":    "#4CAF50",
+                    "technical":    "#FF9800",
+                    "macro":        "#9C27B0",
+                },
+                title="Score Breakdown by Category"
+            )
+            fig_bar.update_layout(
+                xaxis_title="", yaxis_title="Score",
+                legend_title="Category",
+                plot_bgcolor="rgba(0,0,0,0)"
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+            # Full detail expander
+            with st.expander("🔍 Full Detail (all metrics)", expanded=False):
+                st.dataframe(score_df, use_container_width=True)
+
+    else:
+        st.info("No holdings found. Add transactions first.")
+
+    st.divider()
+
+    # ---- HISTORICAL SCORES ----
+    st.subheader("📅 Score History (from Google Sheet)")
+    hist_df = load_score_history()
+
+    if hist_df is not None and not hist_df.empty:
+        # Latest per stock
+        latest = (
+            hist_df.sort_values("date")
             .groupby("stock")
             .tail(1)
+            .reset_index(drop=True)
         )
-        st.dataframe(latest_scores, use_container_width=True)
+        st.dataframe(latest, use_container_width=True)
+
+        # Trend chart for total score over time
+        if len(hist_df["date"].unique()) > 1:
+            st.subheader("📈 Score Trend Over Time")
+            trend_fig = px.line(
+                hist_df.sort_values("date"),
+                x="date", y="total", color="stock",
+                markers=True, title="Total Score Trend"
+            )
+            trend_fig.update_layout(xaxis_title="", yaxis_title="Total Score")
+            st.plotly_chart(trend_fig, use_container_width=True)
     else:
-        st.info("No score history available yet. Scores update at 10:00–10:15 AM and 3:00–3:15 PM.")
+        st.info("No history yet. Scores save automatically at 3:00–3:30 PM EOD.")
 
 
 # ================================================================
@@ -803,10 +1013,8 @@ with tab5:
 
         if submit:
             add_cashflow_entry({
-                "date":   str(date),
-                "type":   type_,
-                "amount": float(amount),
-                "note":   note
+                "date": str(date), "type": type_,
+                "amount": float(amount), "note": note
             })
             st.success("Fund Entry Added!")
             st.rerun()
