@@ -139,6 +139,7 @@ def fetch_all_prices(stocks):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_cached_prices(stocks_tuple):
+    """Cache ONLY market prices for 5 min. Sheet data is never cached."""
     return fetch_all_prices(list(stocks_tuple))
 
 
@@ -618,7 +619,7 @@ open_stocks = tuple(sorted(
 col_r1, col_r2 = st.columns([6, 1])
 with col_r2:
     if st.button("Refresh Prices"):
-        st.cache_data.clear()
+        get_cached_prices.clear()
         st.rerun()
 with col_r1:
     if open_stocks:
