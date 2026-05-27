@@ -309,7 +309,7 @@ def calculate_free_cash(df):
     if cash_df.empty:
         return 0.0
 
-    total_cash = float(cash_df["amount"].sum())
+    total_cash = float(cash_df[cash_df["type"].isin(["CREDIT", "DIVIDEND"])]["amount"].sum())
 
     if df.empty:
         return round(total_cash, 2)
@@ -797,7 +797,7 @@ with tab5:
     with st.form("fund_form"):
         date   = st.date_input("Date")
         amount = st.number_input("Amount", min_value=0.0)
-        type_  = st.selectbox("Type", ["CREDIT", "DEBIT"])
+        type_  = st.selectbox("Type", ["CREDIT", "DEBIT", "DIVIDEND"])
         note   = st.text_input("Note")
         submit = st.form_submit_button("Add Fund Entry")
 
