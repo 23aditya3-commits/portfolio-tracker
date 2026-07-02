@@ -195,8 +195,8 @@ def compute_portfolio(df):
     if holdings.empty:
         buy_cost      = float(df.loc[df["type"] == "BUY",  "amount"].sum())
         sell_proceeds = float(df.loc[df["type"] == "SELL", "amount"].sum())
-        total_charges = float(df["charges"].sum())
-        realised_pnl  = sell_proceeds - buy_cost - total_charges
+        # ── CHANGE: charges do NOT reduce P&L — they reduce free cash only ──
+        realised_pnl  = sell_proceeds - buy_cost
         return 0.0, 0.0, realised_pnl, pd.DataFrame()
 
     buys = df[df["type"] == "BUY"].copy()
@@ -215,11 +215,11 @@ def compute_portfolio(df):
     holdings["cmp"] = pd.to_numeric(holdings["cmp"], errors="coerce").fillna(0.0).astype("float64")
     holdings["value"] = holdings["qty"] * holdings["cmp"]
 
-    invested    = float(holdings["invested"].sum())
-    total_value = float(holdings["value"].sum())
+    invested       = float(holdings["invested"].sum())
+    total_value    = float(holdings["value"].sum())
     unrealised_pnl = total_value - invested
 
-    sell_df = df[df["type"] == "SELL"].copy()
+    sell_df       = df[df["type"] == "SELL"].copy()
     sell_proceeds = float(sell_df["amount"].sum())
 
     sold_cost = 0.0
@@ -229,9 +229,11 @@ def compute_portfolio(df):
             avg_p = float(avg_row["avg_price"].iloc[0])
             sold_cost += float(grp["qty"].sum()) * avg_p
 
-    realised_pnl  = sell_proceeds - sold_cost
-    total_charges = float(df["charges"].sum())
-    pnl = unrealised_pnl + realised_pnl - total_charges
+    realised_pnl = sell_proceeds - sold_cost
+
+    # ── CHANGE: P&L = pure price gain/loss only, charges NOT subtracted ──
+    # Charges (brokerage + STT + taxes) are deducted from free cash instead
+    pnl = unrealised_pnl + realised_pnl
 
     holdings["pnl"] = (holdings["value"] - holdings["invested"]).round(2)
 
@@ -255,8 +257,10 @@ def compute_xirr(df):
     for _, row in df.iterrows():
         amount = float(row["qty"]) * float(row["price"])
         if row["type"] == "BUY":
+            # ── CHANGE: include charges in cash outflow (they leave your account) ──
             cf = -(amount + float(row["charges"]))
         else:
+            # ── CHANGE: charges deducted from sell proceeds (they leave your account) ──
             cf = amount - float(row["charges"])
         cashflows.append((row["date"].to_pydatetime(), cf))
 
@@ -309,7 +313,10 @@ def calculate_free_cash(df):
     if cash_df.empty:
         return 0.0
 
-    total_cash = float(cash_df[cash_df["type"].isin(["CREDIT", "DIVIDEND"])]["amount"].sum())
+    # CREDIT and DIVIDEND both add to available cash
+    total_cash = float(
+        cash_df[cash_df["type"].isin(["CREDIT", "DIVIDEND"])]["amount"].sum()
+    )
 
     if df.empty:
         return round(total_cash, 2)
@@ -321,9 +328,12 @@ def calculate_free_cash(df):
 
     buy_spent     = float(df.loc[df["type"] == "BUY",  "amount"].sum())
     sell_received = float(df.loc[df["type"] == "SELL", "amount"].sum())
-    charges_total = float(df["charges"].sum())
 
-    available = total_cash - buy_spent - charges_total + sell_received
+    # ── CHANGE: charges (taxes + brokerage) are deducted from free cash ──
+    # This covers both BUY and SELL charges in one shot
+    total_charges = float(df["charges"].sum())
+
+    available = total_cash - buy_spent - total_charges + sell_received
     return round(max(available, 0.0), 2)
 
 
@@ -332,7 +342,10 @@ def check_free_cash_before_buy(df, new_date, qty, price):
     if cash_df.empty:
         return False
 
-    total_cash = float(cash_df["amount"].sum())
+    # CREDIT and DIVIDEND both count as available funds
+    total_cash = float(
+        cash_df[cash_df["type"].isin(["CREDIT", "DIVIDEND"])]["amount"].sum()
+    )
 
     df = df.copy()
     df = sanitize_numeric(df, ["qty", "price", "charges"])
@@ -344,6 +357,8 @@ def check_free_cash_before_buy(df, new_date, qty, price):
 
     buy_spent     = float(past.loc[past["type"] == "BUY",  "amount"].sum())
     sell_received = float(past.loc[past["type"] == "SELL", "amount"].sum())
+
+    # ── CHANGE: charges deducted from free cash, not from P&L ──
     charges_total = float(past["charges"].sum())
 
     available = total_cash - buy_spent - charges_total + sell_received
@@ -512,7 +527,6 @@ def save_fundamental_scores(holdings):
                 result["margin"]
             ])
 
-        # Session marker to prevent duplicate saves
         sheet.append_row([today, "__SESSION__", session, 0, 0, 0, 0, 0])
 
     except Exception:
@@ -580,11 +594,10 @@ with tab1:
     col6.metric("NAV",           f"₹{nav:.2f}")
 
     total_charges_display = float(df["charges"].sum()) if not df.empty else 0.0
-    gross_pnl = pnl + total_charges_display
     st.caption(
-        f"📊 Gross P&L: ₹{gross_pnl:,.2f}  |  "
-        f"Charges: ₹{total_charges_display:,.2f}  |  "
-        f"Net P&L (after charges): ₹{pnl:,.2f}"
+        f"📊 P&L (price gain only): ₹{pnl:,.2f}  |  "
+        f"Charges paid (from cash): ₹{total_charges_display:,.2f}  |  "
+        f"Net after charges: ₹{pnl - total_charges_display:,.2f}"
     )
 
     st.divider()
