@@ -1486,3 +1486,11 @@ with tab6:
                                     for n in news['top_news']:
                                         sentiment_emoji = "🟢" if n['sentiment']['compound'] > 0.05 else "🔴" if n['sentiment']['compound'] < -0.05 else "⚪"
                                         st.write(f"{sentiment_emoji} {n['title'][:100]}...")
+
+# ================================================================
+# MAIN EXECUTION
+# ================================================================
+
+if __name__ == "__main__":
+    # The app is already running above
+    pass
